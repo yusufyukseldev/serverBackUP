@@ -45,6 +45,10 @@ kanıtlanmış tasarımlar uygulanır.
 8. **Onaylanmamış bağımlılık ekleme.** `docs/format-spec.md` ve plan
    dosyasında listelenmeyen yeni bir NuGet paketi eklemeden önce kullanıcıya
    sor.
+   - **`FluentAssertions` sürüm 7.x'te sabit.** v8+ ticari lisansa geçti
+     (Xceed, $130/geliştirici/yıl). Bu şirket-içi bir proje olduğu için asla
+     v8+'a yükseltme — `dotnet add package FluentAssertions --version 7.2.0`
+     ile pinle.
 9. **Migration'ı elle düzenleme.** EF Core migration dosyaları `dotnet ef
    migrations add` ile üretilir, sonradan elle değiştirilmez.
 10. **Testi `[Skip]` ile geçirme.** Bir test yazılamıyorsa/geçmiyorsa, testi
