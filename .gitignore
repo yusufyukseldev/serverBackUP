@@ -1,0 +1,27 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+
+## Test / coverage
+TestResults/
+BenchmarkDotNet.Artifacts/
+*.trx
+
+## IDE
+.vs/
+.vscode/
+*.dotCover
+
+## Backup repositories created during local testing — never commit real backup data
+**/TestData/
+**/*.repo/
+*.pack
+*.db
+*.db-wal
+*.db-shm
+
+## OS
+Thumbs.db
+desktop.ini

@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ServerBackup.Core\ServerBackup.Core.csproj" />
+    <ProjectReference Include="..\ServerBackup.Data\ServerBackup.Data.csproj" />
+    <ProjectReference Include="..\ServerBackup.Engine\ServerBackup.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog" Version="4.4.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.55.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>serverbackup</AssemblyName>
+    <RootNamespace>ServerBackup.Cli</RootNamespace>
+  </PropertyGroup>
+
+</Project>

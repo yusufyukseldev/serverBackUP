@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ServerBackup.Cli/ServerBackup.Cli.csproj" />
+    <Project Path="src/ServerBackup.Core/ServerBackup.Core.csproj" />
+    <Project Path="src/ServerBackup.Data/ServerBackup.Data.csproj" />
+    <Project Path="src/ServerBackup.Engine/ServerBackup.Engine.csproj" />
+    <Project Path="src/ServerBackup.Service/ServerBackup.Service.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ServerBackup.Benchmarks/ServerBackup.Benchmarks.csproj" />
+    <Project Path="tests/ServerBackup.Core.Tests/ServerBackup.Core.Tests.csproj" />
+    <Project Path="tests/ServerBackup.Engine.Tests/ServerBackup.Engine.Tests.csproj" />
+    <Project Path="tests/ServerBackup.Integration.Tests/ServerBackup.Integration.Tests.csproj" />
+  </Folder>
+</Solution>
