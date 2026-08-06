@@ -17,6 +17,11 @@ app.Configure(config =>
     });
 
     config.AddCommand<BackupCommand>("backup").WithDescription("Bir veya daha fazla yolu yedekler.");
+    config.AddCommand<RestoreCommand>("restore").WithDescription("Bir snapshot'ı geri yükler.");
+    config.AddCommand<VerifyCommand>("verify").WithDescription("Depo bütünlüğünü doğrular.");
+    config.AddCommand<SnapshotsCommand>("snapshots").WithDescription("Snapshot listesini gösterir.");
+    config.AddCommand<LsCommand>("ls").WithDescription("Bir snapshot içindeki dosyaları listeler.");
+    config.AddCommand<DiffCommand>("diff").WithDescription("İki snapshot arasındaki farkları gösterir.");
 });
 
 return app.Run(args);

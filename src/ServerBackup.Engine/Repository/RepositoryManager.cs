@@ -76,6 +76,7 @@ public static class RepositoryManager
 
         var packCount = 0;
         var blobCount = 0;
+        var skippedPacks = new List<string>();
 
         if (Directory.Exists(dataDir))
         {
@@ -85,10 +86,24 @@ public static class RepositoryManager
 
                 var packId = Path.GetFileNameWithoutExtension(packFile);
                 var bytes = await File.ReadAllBytesAsync(packFile, ct);
-                var sha256 = SHA256.HashData(bytes);
 
-                using var stream = new MemoryStream(bytes, writable: false);
-                var reader = new PackReader(stream, packSubKey);
+                // A pack from a killed/crashed process (never reached Close()) is
+                // never indexed: it fails to parse here and is skipped, not
+                // treated as a fatal error. A pack is only ever "complete" if it
+                // was closed, and only closed packs are safe to catalog.
+                PackReader reader;
+                try
+                {
+                    using var probeStream = new MemoryStream(bytes, writable: false);
+                    reader = new PackReader(probeStream, packSubKey);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or CryptographicException or EndOfStreamException)
+                {
+                    skippedPacks.Add(packFile);
+                    continue;
+                }
+
+                var sha256 = SHA256.HashData(bytes);
 
                 db.Packs.Add(new PackEntity
                 {
@@ -118,10 +133,10 @@ public static class RepositoryManager
         }
 
         await db.SaveChangesAsync(ct);
-        return new RebuildResult(packCount, blobCount);
+        return new RebuildResult(packCount, blobCount, skippedPacks);
     }
 
     private static string CatalogPath(string repoPath) => Path.Combine(repoPath, "catalog.db");
 }
 
-public sealed record RebuildResult(int PackCount, int BlobCount);
+public sealed record RebuildResult(int PackCount, int BlobCount, IReadOnlyList<string> SkippedPacks);

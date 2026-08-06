@@ -30,6 +30,16 @@ public sealed class RepoRebuildIndexCommand : AsyncCommand<RepoRebuildIndexComma
             var result = await RepositoryManager.RebuildIndexAsync(settings.Path, masterKey);
             AnsiConsole.MarkupLine(
                 $"[green]Katalog yeniden oluşturuldu:[/] {result.PackCount} pack, {result.BlobCount} blob.");
+            if (result.SkippedPacks.Count > 0)
+            {
+                AnsiConsole.MarkupLine(
+                    $"[yellow]{result.SkippedPacks.Count} pack dosyası atlandı (tamamlanmamış/bozuk):[/]");
+                foreach (var path in result.SkippedPacks)
+                {
+                    AnsiConsole.MarkupLine($"  [grey]{path}[/]");
+                }
+            }
+
             return 0;
         }
         finally
