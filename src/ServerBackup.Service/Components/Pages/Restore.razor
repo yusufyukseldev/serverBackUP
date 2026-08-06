@@ -1,0 +1,138 @@
+@page "/restore"
+@using System.Security.Cryptography
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@using ServerBackup.Data
+@using ServerBackup.Data.Entities
+@using ServerBackup.Engine.Repository
+@using ServerBackup.Engine.Restore
+@using ServerBackup.Service.Scheduling
+@inject IOptions<ServerBackupOptions> Options
+
+<h1>Geri Yükleme Sihirbazı</h1>
+
+<div class="card">
+    <EditForm Model="_form" OnValidSubmit="RunRestoreAsync">
+        <label>Depo</label>
+        <select @bind="_form.RepoPath" @bind:after="OnRepoChangedAsync">
+            <option value="">— seçin —</option>
+            @foreach (var repoPath in Options.Value.Repositories)
+            {
+                <option value="@repoPath">@repoPath</option>
+            }
+        </select>
+
+        @if (_snapshots is not null)
+        {
+            <label>Snapshot</label>
+            <select @bind="_form.SnapshotId">
+                <option value="">— seçin —</option>
+                @foreach (var s in _snapshots)
+                {
+                    <option value="@s.SnapshotId">@s.SnapshotId (@s.StartedAtUtc.ToString("u"))</option>
+                }
+            </select>
+        }
+
+        <label>Hedef Dizin</label>
+        <input @bind="_form.Target" placeholder="C:\Geri" />
+
+        @if (_form.RepoPath is not null && !UnattendedKeyStore.IsEnabled(_form.RepoPath))
+        {
+            <label>Parola</label>
+            <input type="password" @bind="_form.Password" />
+        }
+
+        <button type="submit" disabled="@_running">@(_running ? "Geri yükleniyor..." : "Geri Yükle")</button>
+    </EditForm>
+</div>
+
+@if (_log.Count > 0)
+{
+    <div class="progress-log">
+        @foreach (var line in _log)
+        {
+            @line<br />
+        }
+    </div>
+}
+
+@code {
+    private sealed class RestoreForm
+    {
+        public string? RepoPath { get; set; }
+        public string SnapshotId { get; set; } = "";
+        public string Target { get; set; } = "";
+        public string? Password { get; set; }
+    }
+
+    private readonly RestoreForm _form = new();
+    private List<SnapshotEntity>? _snapshots;
+    private readonly List<string> _log = [];
+    private bool _running;
+
+    private async Task OnRepoChangedAsync()
+    {
+        _snapshots = null;
+        if (string.IsNullOrEmpty(_form.RepoPath))
+        {
+            return;
+        }
+
+        var dbPath = Path.Combine(_form.RepoPath, "catalog.db");
+        if (!File.Exists(dbPath))
+        {
+            return;
+        }
+
+        await using var db = CatalogDbContextFactory.Create(dbPath);
+        _snapshots = (await db.Snapshots.AsNoTracking().ToListAsync())
+            .OrderByDescending(s => s.StartedAtUtc)
+            .ToList();
+    }
+
+    private async Task RunRestoreAsync()
+    {
+        if (string.IsNullOrEmpty(_form.RepoPath) || string.IsNullOrEmpty(_form.SnapshotId) || string.IsNullOrEmpty(_form.Target))
+        {
+            AppendLog("Depo, snapshot ve hedef dizin zorunludur.");
+            return;
+        }
+
+        _running = true;
+        _log.Clear();
+        AppendLog($"Geri yükleme başlıyor: {_form.SnapshotId} → {_form.Target}");
+
+        byte[]? masterKey = null;
+        try
+        {
+            masterKey = UnattendedKeyStore.IsEnabled(_form.RepoPath)
+                ? UnattendedKeyStore.Unlock(_form.RepoPath)
+                : await RepositoryKeyStore.UnlockAsync(_form.RepoPath, _form.Password ?? "");
+
+            var engine = new RestoreEngine(_form.RepoPath, masterKey);
+            await engine.RestoreAsync(_form.SnapshotId, _form.Target);
+
+            AppendLog("Geri yükleme tamamlandı.");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Hata: {ex.Message}");
+        }
+        finally
+        {
+            if (masterKey is not null)
+            {
+                CryptographicOperations.ZeroMemory(masterKey);
+            }
+
+            _running = false;
+        }
+    }
+
+    private void AppendLog(string message)
+    {
+        _log.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+        StateHasChanged();
+    }
+}

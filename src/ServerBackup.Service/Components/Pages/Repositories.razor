@@ -1,0 +1,94 @@
+@page "/repositories"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@using ServerBackup.Data
+@using ServerBackup.Engine.Repository
+@using ServerBackup.Service.Scheduling
+@inject IOptions<ServerBackupOptions> Options
+
+<h1>Depolar</h1>
+
+@if (_rows is null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Yol</th>
+                <th>Durum</th>
+                <th>Parolasız Erişim</th>
+                <th>Pack</th>
+                <th>Blob</th>
+                <th>Snapshot</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in _rows)
+            {
+                <tr>
+                    <td>@row.RepoPath</td>
+                    <td>
+                        @if (row.Exists)
+                        {
+                            <span class="badge badge-ok">Hazır</span>
+                        }
+                        else
+                        {
+                            <span class="badge badge-err">catalog.db yok</span>
+                        }
+                    </td>
+                    <td>
+                        @if (row.UnattendedEnabled)
+                        {
+                            <span class="badge badge-ok">Açık</span>
+                        }
+                        else
+                        {
+                            <span class="badge badge-muted">Kapalı</span>
+                        }
+                    </td>
+                    <td>@row.PackCount</td>
+                    <td>@row.BlobCount</td>
+                    <td>@row.SnapshotCount</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private sealed record RepoRow(string RepoPath, bool Exists, bool UnattendedEnabled, int PackCount, int BlobCount, int SnapshotCount);
+
+    private List<RepoRow>? _rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var rows = new List<RepoRow>();
+
+        foreach (var repoPath in Options.Value.Repositories)
+        {
+            var dbPath = Path.Combine(repoPath, "catalog.db");
+            var unattended = UnattendedKeyStore.IsEnabled(repoPath);
+
+            if (!File.Exists(dbPath))
+            {
+                rows.Add(new RepoRow(repoPath, false, unattended, 0, 0, 0));
+                continue;
+            }
+
+            await using var db = CatalogDbContextFactory.Create(dbPath);
+            rows.Add(new RepoRow(
+                repoPath,
+                true,
+                unattended,
+                await db.Packs.CountAsync(),
+                await db.Blobs.CountAsync(),
+                await db.Snapshots.CountAsync()));
+        }
+
+        _rows = rows;
+    }
+}

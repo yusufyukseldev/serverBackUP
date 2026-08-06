@@ -11,5 +11,6 @@
     <Project Path="tests/ServerBackup.Core.Tests/ServerBackup.Core.Tests.csproj" />
     <Project Path="tests/ServerBackup.Engine.Tests/ServerBackup.Engine.Tests.csproj" />
     <Project Path="tests/ServerBackup.Integration.Tests/ServerBackup.Integration.Tests.csproj" />
+    <Project Path="tests/ServerBackup.Service.Tests/ServerBackup.Service.Tests.csproj" />
   </Folder>
 </Solution>

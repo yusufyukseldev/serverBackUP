@@ -1,0 +1,231 @@
+@page "/snapshots"
+@using System.Security.Cryptography
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@using ServerBackup.Core.Crypto
+@using ServerBackup.Core.Trees
+@using ServerBackup.Data
+@using ServerBackup.Data.Entities
+@using ServerBackup.Engine.Repository
+@using ServerBackup.Service.Scheduling
+@implements IDisposable
+@inject IOptions<ServerBackupOptions> Options
+
+<h1>Snapshot Gezgini</h1>
+
+<div class="card">
+    <label>Depo</label>
+    <select @bind="_selectedRepo" @bind:after="OnRepoChangedAsync">
+        <option value="">— seçin —</option>
+        @foreach (var repoPath in Options.Value.Repositories)
+        {
+            <option value="@repoPath">@repoPath</option>
+        }
+    </select>
+
+    @if (_selectedRepo is not null && !UnattendedKeyStore.IsEnabled(_selectedRepo) && _masterKey is null)
+    {
+        <label>Parola</label>
+        <input type="password" @bind="_password" />
+        <button @onclick="UnlockAsync">Aç</button>
+    }
+</div>
+
+@if (_error is not null)
+{
+    <p class="badge badge-err">@_error</p>
+}
+
+@if (_snapshots is not null && _selectedSnapshot is null)
+{
+    <table>
+        <thead><tr><th>Snapshot</th><th>Başlangıç</th></tr></thead>
+        <tbody>
+            @foreach (var s in _snapshots)
+            {
+                <tr>
+                    <td><a href="#" @onclick="() => OpenSnapshotAsync(s)" @onclick:preventDefault>@s.SnapshotId</a></td>
+                    <td>@s.StartedAtUtc.ToString("u")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (_selectedSnapshot is not null)
+{
+    <p>
+        <a href="#" @onclick="() => { _selectedSnapshot = null; _pathStack.Clear(); }" @onclick:preventDefault>← Snapshot listesi</a>
+        &nbsp;|&nbsp; @(_pathStack.Count == 0 ? "/" : string.Join("/", _pathStack))
+        @if (_pathStack.Count > 0)
+        {
+            <button @onclick="GoUpAsync">Üst Klasör</button>
+        }
+    </p>
+
+    @if (_currentNodes is not null)
+    {
+        <table>
+            <thead><tr><th></th><th>İsim</th><th>Boyut</th></tr></thead>
+            <tbody>
+                @foreach (var node in _currentNodes.OrderBy(n => n.Name, StringComparer.Ordinal))
+                {
+                    <tr>
+                        <td>@(node.Kind == TreeNodeKind.Directory ? "📁" : "📄")</td>
+                        <td>
+                            @if (node.Kind == TreeNodeKind.Directory && node.SubTreeBlobIdHex is not null)
+                            {
+                                <a href="#" @onclick="() => OpenDirectoryAsync(node)" @onclick:preventDefault>@node.Name</a>
+                            }
+                            else
+                            {
+                                @node.Name
+                            }
+                        </td>
+                        <td>@node.Size.ToString("N0")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private string? _selectedRepo;
+    private string? _password;
+    private byte[]? _masterKey;
+    private BlobStore? _blobStore;
+    private string? _error;
+
+    private List<SnapshotEntity>? _snapshots;
+    private SnapshotEntity? _selectedSnapshot;
+    private readonly List<string> _pathStack = [];
+    private List<TreeNode>? _currentNodes;
+
+    private async Task OnRepoChangedAsync()
+    {
+        _error = null;
+        _snapshots = null;
+        _selectedSnapshot = null;
+        _pathStack.Clear();
+        _masterKey = null;
+        _blobStore?.Dispose();
+        _blobStore = null;
+
+        if (string.IsNullOrEmpty(_selectedRepo))
+        {
+            return;
+        }
+
+        if (UnattendedKeyStore.IsEnabled(_selectedRepo))
+        {
+            _masterKey = UnattendedKeyStore.Unlock(_selectedRepo);
+        }
+
+        await LoadSnapshotsAsync();
+    }
+
+    private async Task UnlockAsync()
+    {
+        if (_selectedRepo is null || _password is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _masterKey = await RepositoryKeyStore.UnlockAsync(_selectedRepo, _password);
+            _error = null;
+            await LoadSnapshotsAsync();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _error = "Parola yanlış.";
+        }
+    }
+
+    private async Task LoadSnapshotsAsync()
+    {
+        if (_selectedRepo is null)
+        {
+            return;
+        }
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_selectedRepo, "catalog.db"));
+        _snapshots = (await db.Snapshots.AsNoTracking().ToListAsync())
+            .OrderByDescending(s => s.StartedAtUtc)
+            .ToList();
+    }
+
+    private async Task OpenSnapshotAsync(SnapshotEntity snapshot)
+    {
+        if (_selectedRepo is null || _masterKey is null)
+        {
+            return;
+        }
+
+        _selectedSnapshot = snapshot;
+        _pathStack.Clear();
+        await LoadNodesAsync(snapshot.RootTreeBlobId);
+    }
+
+    private async Task OpenDirectoryAsync(TreeNode node)
+    {
+        if (node.SubTreeBlobIdHex is null)
+        {
+            return;
+        }
+
+        _pathStack.Add(node.Name);
+        await LoadNodesAsync(node.SubTreeBlobIdHex);
+    }
+
+    private async Task GoUpAsync()
+    {
+        if (_selectedSnapshot is null || _selectedRepo is null || _masterKey is null)
+        {
+            return;
+        }
+
+        _pathStack.RemoveAt(_pathStack.Count - 1);
+
+        var treeBlobIdHex = _selectedSnapshot.RootTreeBlobId;
+        var packSubKey = SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo);
+        using var blobStore = new BlobStore(_selectedRepo, packSubKey, CatalogDbContextFactory.Create(Path.Combine(_selectedRepo, "catalog.db")));
+
+        foreach (var segment in _pathStack)
+        {
+            var bytes = await blobStore.ReadBlobAsync(treeBlobIdHex);
+            var tree = Tree.Deserialize(bytes);
+            var match = tree.Nodes.First(n => n.Name == segment);
+            treeBlobIdHex = match.SubTreeBlobIdHex!;
+        }
+
+        await LoadNodesAsync(treeBlobIdHex);
+    }
+
+    private async Task LoadNodesAsync(string treeBlobIdHex)
+    {
+        if (_selectedRepo is null || _masterKey is null)
+        {
+            return;
+        }
+
+        var packSubKey = SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo);
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_selectedRepo, "catalog.db"));
+        using var blobStore = new BlobStore(_selectedRepo, packSubKey, db);
+
+        var bytes = await blobStore.ReadBlobAsync(treeBlobIdHex);
+        var tree = Tree.Deserialize(bytes);
+        _currentNodes = tree.Nodes.ToList();
+    }
+
+    public void Dispose()
+    {
+        _blobStore?.Dispose();
+        if (_masterKey is not null)
+        {
+            CryptographicOperations.ZeroMemory(_masterKey);
+        }
+    }
+}

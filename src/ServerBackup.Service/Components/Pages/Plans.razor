@@ -1,0 +1,155 @@
+@page "/plans"
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@using ServerBackup.Data
+@using ServerBackup.Data.Entities
+@using ServerBackup.Engine.Retention
+@using ServerBackup.Service.Scheduling
+@inject IOptions<ServerBackupOptions> Options
+
+<h1>Yedekleme Planları</h1>
+
+@if (_plans is null)
+{
+    <p>Yükleniyor...</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Depo</th>
+                <th>İsim</th>
+                <th>Cron</th>
+                <th>Kaynaklar</th>
+                <th>Saklama</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var (repoPath, plan) in _plans)
+            {
+                <tr>
+                    <td>@repoPath</td>
+                    <td>@plan.Name</td>
+                    <td>@plan.CronSchedule</td>
+                    <td>@string.Join(", ", JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson) ?? [])</td>
+                    <td>@(plan.RetentionPolicyJson is null ? "-" : "Ayarlı")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<div class="card">
+    <h2>Yeni Plan</h2>
+    <EditForm Model="_form" OnValidSubmit="CreatePlanAsync">
+        <label>Depo</label>
+        <select @bind="_form.RepoPath">
+            @foreach (var repoPath in Options.Value.Repositories)
+            {
+                <option value="@repoPath">@repoPath</option>
+            }
+        </select>
+
+        <label>Plan Adı</label>
+        <input @bind="_form.Name" />
+
+        <label>Kaynak Yollar (virgülle ayrılmış)</label>
+        <input @bind="_form.SourcePaths" placeholder="C:\Veri, D:\Projeler" />
+
+        <label>Cron İfadesi</label>
+        <input @bind="_form.Cron" placeholder="0 3 * * * (her gün 03:00)" />
+
+        <label>Keep Daily</label>
+        <input type="number" @bind="_form.KeepDaily" />
+
+        <button type="submit">Plan Oluştur</button>
+    </EditForm>
+
+    @if (_message is not null)
+    {
+        <p>@_message</p>
+    }
+</div>
+
+@code {
+    private sealed class PlanForm
+    {
+        public string RepoPath { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string SourcePaths { get; set; } = "";
+        public string Cron { get; set; } = "0 3 * * *";
+        public int? KeepDaily { get; set; }
+    }
+
+    private List<(string RepoPath, PlanEntity Plan)>? _plans;
+    private readonly PlanForm _form = new();
+    private string? _message;
+
+    protected override async Task OnInitializedAsync() => await LoadPlansAsync();
+
+    private async Task LoadPlansAsync()
+    {
+        var plans = new List<(string, PlanEntity)>();
+
+        foreach (var repoPath in Options.Value.Repositories)
+        {
+            var dbPath = Path.Combine(repoPath, "catalog.db");
+            if (!File.Exists(dbPath))
+            {
+                continue;
+            }
+
+            await using var db = CatalogDbContextFactory.Create(dbPath);
+            foreach (var plan in await db.Plans.AsNoTracking().ToListAsync())
+            {
+                plans.Add((repoPath, plan));
+            }
+        }
+
+        _plans = plans;
+    }
+
+    private async Task CreatePlanAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_form.RepoPath) || string.IsNullOrWhiteSpace(_form.Name)
+            || string.IsNullOrWhiteSpace(_form.SourcePaths) || string.IsNullOrWhiteSpace(_form.Cron))
+        {
+            _message = "Tüm alanları doldurun.";
+            return;
+        }
+
+        try
+        {
+            Cronos.CronExpression.Parse(_form.Cron, Cronos.CronFormat.Standard);
+        }
+        catch (Exception ex)
+        {
+            _message = $"Geçersiz cron ifadesi: {ex.Message}";
+            return;
+        }
+
+        var sources = _form.SourcePaths.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var retentionJson = _form.KeepDaily is { } keepDaily
+            ? JsonSerializer.Serialize(new RetentionPolicy(KeepDaily: keepDaily))
+            : null;
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_form.RepoPath, "catalog.db"));
+        db.Plans.Add(new PlanEntity
+        {
+            PlanId = Guid.NewGuid().ToString("n"),
+            Name = _form.Name,
+            SourcePathsJson = JsonSerializer.Serialize(sources),
+            CronSchedule = _form.Cron,
+            RetentionPolicyJson = retentionJson,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        _message = "Plan oluşturuldu.";
+        _form.Name = "";
+        _form.SourcePaths = "";
+        await LoadPlansAsync();
+    }
+}

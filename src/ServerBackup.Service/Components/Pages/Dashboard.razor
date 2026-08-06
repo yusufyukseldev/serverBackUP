@@ -1,0 +1,91 @@
+@page "/"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@using ServerBackup.Data
+@using ServerBackup.Service.Scheduling
+@inject IOptions<ServerBackupOptions> Options
+
+<h1>Dashboard</h1>
+
+@if (_summaries is null)
+{
+    <p>Yükleniyor...</p>
+}
+else if (_summaries.Count == 0)
+{
+    <p>Yapılandırılmış depo yok. <code>appsettings.json</code> içindeki <code>ServerBackup:Repositories</code> listesine bir depo yolu ekleyin.</p>
+}
+else
+{
+    <div class="cards">
+        @foreach (var s in _summaries)
+        {
+            <div class="card">
+                <div class="metric-label">@s.RepoPath</div>
+                <div class="metric-value">@s.SnapshotCount</div>
+                <div class="metric-label">snapshot · @s.PackCount pack · @FormatBytes(s.TotalBytes)</div>
+                @if (s.LastJobStatus is not null)
+                {
+                    <div style="margin-top: 0.5rem;">
+                        Son iş: <span class="badge @StatusBadgeClass(s.LastJobStatus)">@s.LastJobStatus</span>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private sealed record RepoSummary(string RepoPath, int SnapshotCount, int PackCount, long TotalBytes, string? LastJobStatus);
+
+    private List<RepoSummary>? _summaries;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var summaries = new List<RepoSummary>();
+
+        foreach (var repoPath in Options.Value.Repositories)
+        {
+            var dbPath = Path.Combine(repoPath, "catalog.db");
+            if (!File.Exists(dbPath))
+            {
+                continue;
+            }
+
+            await using var db = CatalogDbContextFactory.Create(dbPath);
+            var snapshotCount = await db.Snapshots.CountAsync();
+            var packCount = await db.Packs.CountAsync();
+            var totalBytes = await db.Packs.SumAsync(p => (long?)p.SizeBytes) ?? 0;
+
+            var lastJob = (await db.Jobs.AsNoTracking().ToListAsync())
+                .OrderByDescending(j => j.StartedAtUtc)
+                .FirstOrDefault();
+
+            summaries.Add(new RepoSummary(repoPath, snapshotCount, packCount, totalBytes, lastJob?.Status));
+        }
+
+        _summaries = summaries;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        var unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return $"{value:0.#} {units[unitIndex]}";
+    }
+
+    private static string StatusBadgeClass(string status) => status switch
+    {
+        "Succeeded" => "badge-ok",
+        "Failed" => "badge-err",
+        "Running" or "Pending" => "badge-warn",
+        _ => "badge-muted",
+    };
+}

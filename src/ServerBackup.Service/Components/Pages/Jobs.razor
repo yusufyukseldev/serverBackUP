@@ -1,0 +1,91 @@
+@page "/jobs"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@using ServerBackup.Data
+@using ServerBackup.Data.Entities
+@using ServerBackup.Service.Scheduling
+@implements IDisposable
+@inject IOptions<ServerBackupOptions> Options
+
+<h1>İş Geçmişi</h1>
+
+@if (_jobs is null)
+{
+    <p>Yükleniyor...</p>
+}
+else if (_jobs.Count == 0)
+{
+    <p>Henüz iş kaydı yok.</p>
+}
+else
+{
+    <table>
+        <thead>
+            <tr>
+                <th>Depo</th>
+                <th>İş</th>
+                <th>Durum</th>
+                <th>Başlangıç</th>
+                <th>Bitiş</th>
+                <th>Hata</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var (repoPath, job) in _jobs)
+            {
+                <tr>
+                    <td>@repoPath</td>
+                    <td>@job.JobId</td>
+                    <td><span class="badge @StatusBadgeClass(job.Status)">@job.Status</span></td>
+                    <td>@(job.StartedAtUtc?.ToString("u") ?? "-")</td>
+                    <td>@(job.FinishedAtUtc?.ToString("u") ?? "-")</td>
+                    <td>@(job.ErrorMessage ?? "-")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<(string RepoPath, JobEntity Job)>? _jobs;
+    private Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _timer = new Timer(async _ => await InvokeAsync(RefreshAsync), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task RefreshAsync()
+    {
+        var jobs = new List<(string, JobEntity)>();
+
+        foreach (var repoPath in Options.Value.Repositories)
+        {
+            var dbPath = Path.Combine(repoPath, "catalog.db");
+            if (!File.Exists(dbPath))
+            {
+                continue;
+            }
+
+            await using var db = CatalogDbContextFactory.Create(dbPath);
+            foreach (var job in await db.Jobs.AsNoTracking().ToListAsync())
+            {
+                jobs.Add((repoPath, job));
+            }
+        }
+
+        _jobs = jobs.OrderByDescending(j => j.Item2.StartedAtUtc).ToList();
+        StateHasChanged();
+    }
+
+    private static string StatusBadgeClass(string status) => status switch
+    {
+        "Succeeded" => "badge-ok",
+        "Failed" => "badge-err",
+        "Running" or "Pending" => "badge-warn",
+        _ => "badge-muted",
+    };
+
+    public void Dispose() => _timer?.Dispose();
+}
