@@ -40,8 +40,21 @@ public sealed class PackWriter : IDisposable
     /// <summary>Total bytes written so far (including salt, but not the not-yet-written header/footer).</summary>
     public ulong CurrentLengthBytes => _offset;
 
-    /// <summary>Encrypts, optionally compresses, and appends one blob to the pack.</summary>
+    /// <summary>Compresses, encrypts, and appends one blob to the pack.</summary>
     public void AddBlob(byte[] blobId, BlobKind kind, ReadOnlySpan<byte> plaintext)
+    {
+        var (compressed, codec) = CompressionCodec.Compress(plaintext);
+        AddPreCompressedBlob(blobId, kind, compressed, codec, plaintext.Length);
+    }
+
+    /// <summary>
+    /// Encrypts and appends a blob whose compression was already done
+    /// elsewhere (e.g. by a parallel worker upstream of a single writer —
+    /// see plan Faz 5's pipeline). Compression is CPU-bound and safe to
+    /// parallelize; encryption is not, since each blob's nonce depends on
+    /// its sequential position within this pack.
+    /// </summary>
+    public void AddPreCompressedBlob(byte[] blobId, BlobKind kind, byte[] compressedData, byte codec, int lenPlain)
     {
         if (_closed)
         {
@@ -53,9 +66,8 @@ public sealed class PackWriter : IDisposable
             throw new ArgumentException($"Blob id must be {Crypto.BlobId.SizeBytes} bytes.", nameof(blobId));
         }
 
-        var (compressed, codec) = CompressionCodec.Compress(plaintext);
         var nonce = PackNonce.ForBlobIndex(_nextBlobIndex);
-        var sealedData = AeadCipher.Seal(_packKey, nonce, compressed);
+        var sealedData = AeadCipher.Seal(_packKey, nonce, compressedData);
 
         WriteRaw(sealedData);
 
@@ -64,7 +76,7 @@ public sealed class PackWriter : IDisposable
             Kind: kind,
             Offset: _offset,
             LenStored: (uint)sealedData.Length,
-            LenPlain: (uint)plaintext.Length,
+            LenPlain: (uint)lenPlain,
             Compression: codec));
 
         _offset += (ulong)sealedData.Length;

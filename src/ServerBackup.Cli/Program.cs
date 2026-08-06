@@ -15,6 +15,8 @@ app.Configure(config =>
         repo.AddCommand<RepoRebuildIndexCommand>("rebuild-index")
             .WithDescription("Katalogu pack dosyalarından yeniden oluşturur.");
     });
+
+    config.AddCommand<BackupCommand>("backup").WithDescription("Bir veya daha fazla yolu yedekler.");
 });
 
 return app.Run(args);
