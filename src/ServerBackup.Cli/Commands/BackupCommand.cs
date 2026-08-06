@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using ServerBackup.Engine.Backup;
 using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Scanning;
+using ServerBackup.Engine.Vss;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -27,6 +28,10 @@ public sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
         [CommandOption("--parent")]
         [Description("Incremental için önceki snapshot kimliği. Verilmezse tam tarama yapılır.")]
         public string? Parent { get; init; }
+
+        [CommandOption("--no-vss")]
+        [Description("Volume Shadow Copy kullanma; dosyaları doğrudan oku (açık/kilitli dosyalar atlanabilir, yönetici gerektirmez).")]
+        public bool NoVss { get; init; }
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -35,13 +40,32 @@ public sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
             new TextPrompt<string>("Depo parolası:").Secret());
 
         var masterKey = await RepositoryKeyStore.UnlockAsync(settings.Repo, password, cancellationToken);
+        VssSnapshotSession? vssSession = null;
         try
         {
+            ISourceProvider source = new LocalSourceProvider();
+
+            if (!settings.NoVss)
+            {
+                try
+                {
+                    vssSession = VssSnapshotSession.Create(settings.SourcePaths);
+                    source = new VssSourceProvider(source, vssSession);
+                    AnsiConsole.MarkupLine("[grey]VSS gölge kopyası oluşturuldu.[/]");
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+                {
+                    AnsiConsole.MarkupLine($"[red]VSS kullanılamadı:[/] {ex.Message}");
+                    AnsiConsole.MarkupLine("[yellow]VSS olmadan devam etmek için --no-vss kullanın.[/]");
+                    return 1;
+                }
+            }
+
             var progress = new Progress<BackupProgress>(p =>
                 AnsiConsole.MarkupLine(
                     $"[grey]{p.FilesScanned} dosya ({p.FilesUnchanged} değişmedi, {p.FilesChanged} değişti) — {p.NewBlobsWritten} yeni blob, {p.NewBytesWritten:N0} bayt[/]"));
 
-            var engine = new BackupEngine(new LocalSourceProvider(), settings.Repo, masterKey, progress: progress);
+            var engine = new BackupEngine(source, settings.Repo, masterKey, progress: progress);
             var snapshotId = await engine.RunAsync(settings.SourcePaths, settings.Parent, cancellationToken);
 
             AnsiConsole.MarkupLine($"[green]Yedekleme tamamlandı.[/] Snapshot: [bold]{snapshotId}[/]");
@@ -49,6 +73,7 @@ public sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
         }
         finally
         {
+            vssSession?.Dispose();
             CryptographicOperations.ZeroMemory(masterKey);
         }
     }
