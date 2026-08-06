@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\src\ServerBackup.Data\ServerBackup.Data.csproj" />
     <ProjectReference Include="..\..\src\ServerBackup.Engine\ServerBackup.Engine.csproj" />
     <ProjectReference Include="..\..\src\ServerBackup.Cli\ServerBackup.Cli.csproj" />
+    <ProjectReference Include="..\..\src\ServerBackup.Service\ServerBackup.Service.csproj" />
   </ItemGroup>
 
 </Project>

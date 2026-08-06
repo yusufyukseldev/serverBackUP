@@ -44,7 +44,7 @@ public sealed class LsCommand : AsyncCommand<LsCommand.Settings>
                 .FirstOrDefaultAsync(s => s.SnapshotId == settings.SnapshotId, cancellationToken);
             if (snapshot is null)
             {
-                AnsiConsole.MarkupLine($"[red]Snapshot bulunamadı: {settings.SnapshotId}[/]");
+                AnsiConsole.MarkupLine($"[red]Snapshot bulunamadı: {settings.SnapshotId.EscapeMarkup()}[/]");
                 return 1;
             }
 
@@ -57,7 +57,7 @@ public sealed class LsCommand : AsyncCommand<LsCommand.Settings>
                 treeBlobIdHex = await ResolveSubTreeAsync(blobStore, treeBlobIdHex, settings.Path, cancellationToken);
                 if (treeBlobIdHex is null)
                 {
-                    AnsiConsole.MarkupLine($"[red]Yol bulunamadı: {settings.Path}[/]");
+                    AnsiConsole.MarkupLine($"[red]Yol bulunamadı: {settings.Path.EscapeMarkup()}[/]");
                     return 1;
                 }
             }
@@ -68,7 +68,7 @@ public sealed class LsCommand : AsyncCommand<LsCommand.Settings>
             foreach (var node in tree.Nodes.OrderBy(n => n.Name, StringComparer.Ordinal))
             {
                 var kind = node.Kind == TreeNodeKind.Directory ? "d" : "-";
-                AnsiConsole.MarkupLine($"{kind} {node.Size,12:N0}  {node.Name}");
+                AnsiConsole.MarkupLine($"{kind} {node.Size,12:N0}  {node.Name.EscapeMarkup()}");
             }
 
             return 0;

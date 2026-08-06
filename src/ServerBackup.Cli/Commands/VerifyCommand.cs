@@ -50,7 +50,7 @@ public sealed class VerifyCommand : AsyncCommand<VerifyCommand.Settings>
             AnsiConsole.MarkupLine($"[red]{issues.Count} sorun bulundu[/] ({level} seviyesinde):");
             foreach (var issue in issues)
             {
-                AnsiConsole.MarkupLine($"  [yellow][[{issue.Category}]][/] {issue.Description}");
+                AnsiConsole.MarkupLine($"  [yellow][[{issue.Category.EscapeMarkup()}]][/] {issue.Description.EscapeMarkup()}");
             }
 
             return 1;

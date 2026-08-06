@@ -55,7 +55,7 @@ public sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
                 {
-                    AnsiConsole.MarkupLine($"[red]VSS kullanılamadı:[/] {ex.Message}");
+                    AnsiConsole.MarkupLine($"[red]VSS kullanılamadı:[/] {ex.Message.EscapeMarkup()}");
                     AnsiConsole.MarkupLine("[yellow]VSS olmadan devam etmek için --no-vss kullanın.[/]");
                     return 1;
                 }

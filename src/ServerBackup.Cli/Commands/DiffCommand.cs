@@ -56,17 +56,18 @@ public sealed class DiffCommand : AsyncCommand<DiffCommand.Settings>
                 var inA = mapA.FilesByRelativePath.TryGetValue(path, out var nodeA);
                 var inB = mapB.FilesByRelativePath.TryGetValue(path, out var nodeB);
 
+                var escapedPath = path.EscapeMarkup();
                 if (!inA)
                 {
-                    AnsiConsole.MarkupLine($"[green]+[/] {path}");
+                    AnsiConsole.MarkupLine($"[green]+[/] {escapedPath}");
                 }
                 else if (!inB)
                 {
-                    AnsiConsole.MarkupLine($"[red]-[/] {path}");
+                    AnsiConsole.MarkupLine($"[red]-[/] {escapedPath}");
                 }
                 else if (nodeA!.Size != nodeB!.Size || nodeA.ModifiedAtFileTimeUtc != nodeB.ModifiedAtFileTimeUtc)
                 {
-                    AnsiConsole.MarkupLine($"[yellow]~[/] {path}");
+                    AnsiConsole.MarkupLine($"[yellow]~[/] {escapedPath}");
                 }
             }
 

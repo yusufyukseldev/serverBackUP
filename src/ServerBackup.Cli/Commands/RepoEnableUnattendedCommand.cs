@@ -6,7 +6,7 @@ using Spectre.Console.Cli;
 
 namespace ServerBackup.Cli.Commands;
 
-public sealed class RepoRebuildIndexCommand : AsyncCommand<RepoRebuildIndexCommand.Settings>
+public sealed class RepoEnableUnattendedCommand : AsyncCommand<RepoEnableUnattendedCommand.Settings>
 {
     public sealed class Settings : CommandSettings
     {
@@ -24,22 +24,14 @@ public sealed class RepoRebuildIndexCommand : AsyncCommand<RepoRebuildIndexComma
         var password = settings.Password ?? AnsiConsole.Prompt(
             new TextPrompt<string>("Depo parolası:").Secret());
 
-        var masterKey = await RepositoryKeyStore.UnlockAsync(settings.Path, password);
+        var masterKey = await RepositoryKeyStore.UnlockAsync(settings.Path, password, cancellationToken);
         try
         {
-            var result = await RepositoryManager.RebuildIndexAsync(settings.Path, masterKey);
+            UnattendedKeyStore.Enable(settings.Path, masterKey);
+            AnsiConsole.MarkupLine("[green]Parolasız (servis) erişim etkinleştirildi.[/]");
             AnsiConsole.MarkupLine(
-                $"[green]Katalog yeniden oluşturuldu:[/] {result.PackCount} pack, {result.BlobCount} blob.");
-            if (result.SkippedPacks.Count > 0)
-            {
-                AnsiConsole.MarkupLine(
-                    $"[yellow]{result.SkippedPacks.Count} pack dosyası atlandı (tamamlanmamış/bozuk):[/]");
-                foreach (var path in result.SkippedPacks)
-                {
-                    AnsiConsole.MarkupLine($"  [grey]{path.EscapeMarkup()}[/]");
-                }
-            }
-
+                "[yellow]Uyarı:[/] Bu makinede SYSTEM/yönetici yetkisi ele geçiren biri artık bu depoyu açabilir " +
+                "(DPAPI LocalMachine kapsamı). Bu bilinçli bir takas — kapatmak için 'repo disable-unattended'.");
             return 0;
         }
         finally
