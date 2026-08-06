@@ -22,6 +22,7 @@ app.Configure(config =>
     config.AddCommand<SnapshotsCommand>("snapshots").WithDescription("Snapshot listesini gösterir.");
     config.AddCommand<LsCommand>("ls").WithDescription("Bir snapshot içindeki dosyaları listeler.");
     config.AddCommand<DiffCommand>("diff").WithDescription("İki snapshot arasındaki farkları gösterir.");
+    config.AddCommand<PruneCommand>("prune").WithDescription("Saklama politikasına göre eski snapshot'ları ve kullanılmayan verileri temizler.");
 });
 
 return app.Run(args);

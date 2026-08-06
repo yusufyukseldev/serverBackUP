@@ -9,5 +9,8 @@ public sealed class SnapshotEntity
     public DateTimeOffset? FinishedAtUtc { get; set; }
     public required string RootTreeBlobId { get; set; }
 
+    /// <summary>Comma-separated tags, used by the retention policy's KeepTags rule. Null/empty means no tags.</summary>
+    public string? Tags { get; set; }
+
     public List<SnapshotPathEntity> Paths { get; set; } = [];
 }

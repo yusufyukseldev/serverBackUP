@@ -82,16 +82,33 @@ public sealed class PackFileSet : IAsyncDisposable
 
         foreach (var entry in summary.Entries)
         {
-            _db.Blobs.Add(new BlobEntity
+            var blobIdHex = Convert.ToHexStringLower(entry.BlobId);
+
+            // Upsert: a repack (Faz 8) relocates existing blobs into a new
+            // pack — the row already exists and must be repointed, not
+            // duplicated (BlobId is the primary key).
+            var existing = await _db.Blobs.FindAsync([blobIdHex], ct);
+            if (existing is not null)
             {
-                BlobId = Convert.ToHexStringLower(entry.BlobId),
-                PackId = _packId!,
-                Kind = (byte)entry.Kind,
-                Offset = (long)entry.Offset,
-                LenStored = (int)entry.LenStored,
-                LenPlain = (int)entry.LenPlain,
-                Compression = entry.Compression,
-            });
+                existing.PackId = _packId!;
+                existing.Offset = (long)entry.Offset;
+                existing.LenStored = (int)entry.LenStored;
+                existing.LenPlain = (int)entry.LenPlain;
+                existing.Compression = entry.Compression;
+            }
+            else
+            {
+                _db.Blobs.Add(new BlobEntity
+                {
+                    BlobId = blobIdHex,
+                    PackId = _packId!,
+                    Kind = (byte)entry.Kind,
+                    Offset = (long)entry.Offset,
+                    LenStored = (int)entry.LenStored,
+                    LenPlain = (int)entry.LenPlain,
+                    Compression = entry.Compression,
+                });
+            }
         }
 
         await _db.SaveChangesAsync(ct);
