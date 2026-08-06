@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using ServerBackup.Data;
 using ServerBackup.Data.Entities;
 using ServerBackup.Engine.Backup;
+using ServerBackup.Engine.Notifications;
 using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Scanning;
 using ServerBackup.Engine.Scheduling;
@@ -52,7 +53,7 @@ public sealed class BackupSchedulerServiceTests : IDisposable
             MaxConcurrentJobs = 1,
         });
         var queue = new JobQueue();
-        var service = new BackupSchedulerService(options, queue, NullLogger<BackupSchedulerService>.Instance);
+        var service = new BackupSchedulerService(options, queue, new NoOpNotifier(), NullLogger<BackupSchedulerService>.Instance);
 
         await service.StartAsync(CancellationToken.None);
         try
@@ -107,6 +108,13 @@ public sealed class BackupSchedulerServiceTests : IDisposable
             {
                 Directory.Delete(dir, recursive: true);
             }
+        }
+    }
+
+    private sealed class NoOpNotifier : INotifier
+    {
+        public void Notify(string title, string message, NotificationSeverity severity)
+        {
         }
     }
 }

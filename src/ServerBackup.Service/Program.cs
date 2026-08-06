@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Serilog;
+using ServerBackup.Engine.Notifications;
 using ServerBackup.Engine.Scheduling;
 using ServerBackup.Service.Components;
 using ServerBackup.Service.Scheduling;
@@ -19,6 +20,7 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 
 builder.Services.Configure<ServerBackupOptions>(builder.Configuration.GetSection(ServerBackupOptions.SectionName));
 builder.Services.AddSingleton<JobQueue>();
+builder.Services.AddSingleton<INotifier, WindowsEventLogNotifier>();
 builder.Services.AddHostedService<BackupSchedulerService>();
 
 // Windows Authentication (Negotiate/Kerberos) — the natural fit for a

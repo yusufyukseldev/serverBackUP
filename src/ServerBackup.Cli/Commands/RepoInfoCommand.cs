@@ -32,6 +32,14 @@ public sealed class RepoInfoCommand : AsyncCommand<RepoInfoCommand.Settings>
         AnsiConsole.MarkupLine($"Depo kimliği: [bold]{config.RepositoryId}[/]");
         AnsiConsole.MarkupLine($"Format sürümü: {config.FormatVersion}");
         AnsiConsole.MarkupLine($"Oluşturulma: {config.CreatedAtUtc:u}");
+        if (config.AppendOnly)
+        {
+            AnsiConsole.MarkupLine("[yellow]Append-only:[/] açık (hiçbir snapshot silinemez)");
+        }
+        else if (config.ImmutabilityWindowDays is { } days)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Immutability penceresi:[/] {days} gün");
+        }
 
         var dbPath = System.IO.Path.Combine(settings.Path, "catalog.db");
         if (File.Exists(dbPath))

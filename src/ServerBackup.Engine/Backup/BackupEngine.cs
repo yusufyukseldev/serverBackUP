@@ -8,6 +8,7 @@ using ServerBackup.Core.Repository;
 using ServerBackup.Core.Trees;
 using ServerBackup.Data;
 using ServerBackup.Data.Entities;
+using ServerBackup.Engine.Audit;
 using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Scanning;
 
@@ -29,6 +30,7 @@ public sealed class BackupEngine
     private readonly FastCdcChunker _chunker;
     private readonly byte[] _idKey;
     private readonly int _compressionParallelism;
+    private readonly AnomalyPolicy? _anomalyPolicy;
 
     public BackupEngine(
         ISourceProvider source,
@@ -36,7 +38,8 @@ public sealed class BackupEngine
         byte[] masterKey,
         ScanFilter? filter = null,
         IProgress<BackupProgress>? progress = null,
-        int? compressionParallelism = null)
+        int? compressionParallelism = null,
+        AnomalyPolicy? anomalyPolicy = null)
     {
         _source = source;
         _repoPath = repoPath;
@@ -46,6 +49,7 @@ public sealed class BackupEngine
         _idKey = SubKeys.Derive(masterKey, SubKeys.ChunkIdInfo);
         _chunker = new FastCdcChunker(GearTableFactory.Derive(masterKey));
         _compressionParallelism = compressionParallelism ?? Math.Max(1, Environment.ProcessorCount - 1);
+        _anomalyPolicy = anomalyPolicy;
     }
 
     /// <summary>Per-run counters. Kept off the engine instance so a single BackupEngine can safely run multiple backups sequentially.</summary>
@@ -55,9 +59,20 @@ public sealed class BackupEngine
         public long FilesChanged;
         public long NewBlobsWritten;
         public long NewBytesWritten;
+
+        /// <summary>
+        /// Every file's relative path seen this run, whether changed or not —
+        /// used to detect deletions (present in the parent, absent here) for
+        /// anomaly detection. Only ever touched by the single walker
+        /// coroutine, so a plain HashSet is safe.
+        /// </summary>
+        public readonly HashSet<string> VisitedFileRelativePaths = new(StringComparer.Ordinal);
+
+        public readonly List<string> ChangedFileNames = [];
     }
 
-    public async Task<string> RunAsync(IReadOnlyList<string> sourcePaths, string? parentSnapshotId = null, CancellationToken ct = default)
+    public async Task<string> RunAsync(
+        IReadOnlyList<string> sourcePaths, string? parentSnapshotId = null, string? planId = null, CancellationToken ct = default)
     {
         if (sourcePaths.Count == 0)
         {
@@ -116,6 +131,11 @@ public sealed class BackupEngine
             writeChannel.Writer.Complete();
             await writerTask;
 
+            if (_anomalyPolicy is not null && parentCache is not null)
+            {
+                await CheckForAnomaliesAsync(db, parentCache, counters, ct);
+            }
+
             var rootTree = new Tree(rootNodes);
             var rootTreeBlobIdHex = await WriteTreeIfNewAsync(rootTree, packFileSet, claimed, counters, ct);
 
@@ -125,7 +145,7 @@ public sealed class BackupEngine
             db.Snapshots.Add(new SnapshotEntity
             {
                 SnapshotId = snapshotId,
-                PlanId = null,
+                PlanId = planId,
                 ParentSnapshotId = parentSnapshotId,
                 StartedAtUtc = startedAtUtc,
                 FinishedAtUtc = DateTimeOffset.UtcNow,
@@ -163,6 +183,37 @@ public sealed class BackupEngine
             }
 
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Compares this run's file activity against the parent snapshot. On
+    /// detection: always recorded to the audit log; if the policy says to
+    /// abort, throws before anything is committed (see plan Faz 11) — the
+    /// pending pack is discarded by PackFileSet's own abort-on-dispose logic,
+    /// exactly like any other aborted run.
+    /// </summary>
+    private async Task CheckForAnomaliesAsync(CatalogDbContext db, ParentSnapshotCache parentCache, RunCounters counters, CancellationToken ct)
+    {
+        var parentFileCount = parentCache.FilesByRelativePath.Values.Count(n => n.Kind == TreeNodeKind.File);
+        var deletedCount = parentCache.FilesByRelativePath
+            .Count(kv => kv.Value.Kind == TreeNodeKind.File && !counters.VisitedFileRelativePaths.Contains(kv.Key));
+
+        var report = AnomalyDetector.Evaluate(
+            _anomalyPolicy!, parentFileCount, (int)Interlocked.Read(ref counters.FilesChanged), deletedCount, counters.ChangedFileNames);
+
+        if (!report.Detected)
+        {
+            return;
+        }
+
+        var message = string.Join(" ", report.Reasons);
+        await AuditLogger.RecordAsync(
+            db, _anomalyPolicy!.AbortOnDetection ? "anomaly-abort" : "anomaly-warning", message, ct);
+
+        if (_anomalyPolicy.AbortOnDetection)
+        {
+            throw new AnomalyDetectedException(message);
         }
     }
 
@@ -219,6 +270,7 @@ public sealed class BackupEngine
         ChannelWriter<PendingBlob> writer, RunCounters counters, CancellationToken ct)
     {
         var mtimeFileTime = entry.LastWriteTimeUtc.ToFileTimeUtc();
+        counters.VisitedFileRelativePaths.Add(relativePath);
 
         if (parentCache is not null &&
             parentCache.TryGetUnchangedFile(relativePath, entry.Size, mtimeFileTime, (int)entry.Attributes, out var cached))
@@ -229,6 +281,7 @@ public sealed class BackupEngine
         }
 
         Interlocked.Increment(ref counters.FilesChanged);
+        counters.ChangedFileNames.Add(entry.Name);
 
         var chunkIds = new List<string>();
         using (var stream = _source.OpenRead(entry.FullPath))

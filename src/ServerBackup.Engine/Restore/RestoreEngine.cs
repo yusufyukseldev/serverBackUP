@@ -4,6 +4,7 @@ using ServerBackup.Core.Crypto;
 using ServerBackup.Core.Repository;
 using ServerBackup.Core.Trees;
 using ServerBackup.Data;
+using ServerBackup.Engine.Audit;
 using ServerBackup.Engine.Repository;
 
 namespace ServerBackup.Engine.Restore;
@@ -87,6 +88,12 @@ public sealed class RestoreEngine
         {
             ApplyMetadata(dir.TargetPath, dir.ModifiedAtFileTimeUtc, dir.Attributes, dir.Sddl, isDirectory: true);
         }
+
+        await AuditLogger.RecordAsync(
+            db,
+            "restore",
+            $"Snapshot '{snapshotId}' → '{targetPath}' ({filesToWrite.Count} dosya).",
+            ct);
     }
 
     private static async Task WriteChunksGroupedByPackAsync(

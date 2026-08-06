@@ -8,12 +8,16 @@ namespace ServerBackup.Core.Repository;
 public sealed record RepositoryConfig(
     int FormatVersion,
     string RepositoryId,
-    DateTimeOffset CreatedAtUtc)
+    DateTimeOffset CreatedAtUtc,
+    int? ImmutabilityWindowDays = null,
+    bool AppendOnly = false)
 {
     public const int CurrentFormatVersion = 1;
 
-    public static RepositoryConfig CreateNew() => new(
+    public static RepositoryConfig CreateNew(int? immutabilityWindowDays = null, bool appendOnly = false) => new(
         FormatVersion: CurrentFormatVersion,
         RepositoryId: Guid.NewGuid().ToString("n"),
-        CreatedAtUtc: DateTimeOffset.UtcNow);
+        CreatedAtUtc: DateTimeOffset.UtcNow,
+        ImmutabilityWindowDays: immutabilityWindowDays,
+        AppendOnly: appendOnly);
 }

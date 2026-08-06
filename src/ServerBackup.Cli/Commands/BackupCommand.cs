@@ -66,7 +66,7 @@ public sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
                     $"[grey]{p.FilesScanned} dosya ({p.FilesUnchanged} değişmedi, {p.FilesChanged} değişti) — {p.NewBlobsWritten} yeni blob, {p.NewBytesWritten:N0} bayt[/]"));
 
             var engine = new BackupEngine(source, settings.Repo, masterKey, progress: progress);
-            var snapshotId = await engine.RunAsync(settings.SourcePaths, settings.Parent, cancellationToken);
+            var snapshotId = await engine.RunAsync(settings.SourcePaths, settings.Parent, ct: cancellationToken);
 
             AnsiConsole.MarkupLine($"[green]Yedekleme tamamlandı.[/] Snapshot: [bold]{snapshotId}[/]");
             return 0;

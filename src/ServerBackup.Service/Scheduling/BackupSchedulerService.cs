@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using ServerBackup.Data;
 using ServerBackup.Data.Entities;
 using ServerBackup.Engine.Backup;
+using ServerBackup.Engine.Notifications;
 using ServerBackup.Engine.Prune;
 using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Retention;
@@ -24,6 +25,7 @@ namespace ServerBackup.Service.Scheduling;
 public sealed class BackupSchedulerService(
     IOptions<ServerBackupOptions> options,
     JobQueue queue,
+    INotifier notifier,
     ILogger<BackupSchedulerService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -164,8 +166,23 @@ public sealed class BackupSchedulerService(
                 var sourcePaths = JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson)
                     ?? throw new InvalidDataException($"Plan '{plan.PlanId}' has no valid source paths.");
 
-                var engine = new BackupEngine(new LocalSourceProvider(), scheduled.RepoPath, masterKey);
-                var snapshotId = await engine.RunAsync(sourcePaths, ct: stoppingToken);
+                // Chain to this plan's most recent snapshot so the run is
+                // incremental and anomaly detection (which needs a parent to
+                // compare against) actually has something to compare against.
+                var parentSnapshotId = (await db.Snapshots.AsNoTracking()
+                        .Where(s => s.PlanId == plan.PlanId)
+                        .ToListAsync(CancellationToken.None))
+                    .OrderByDescending(s => s.StartedAtUtc)
+                    .FirstOrDefault()
+                    ?.SnapshotId;
+
+                // Unattended runs have no human watching, so anomaly
+                // detection defaults to aborting rather than just warning —
+                // see plan Faz 11.
+                var engine = new BackupEngine(
+                    new LocalSourceProvider(), scheduled.RepoPath, masterKey,
+                    anomalyPolicy: new AnomalyPolicy(AbortOnDetection: true));
+                var snapshotId = await engine.RunAsync(sourcePaths, parentSnapshotId, plan.PlanId, stoppingToken);
 
                 if (!string.IsNullOrEmpty(plan.RetentionPolicyJson))
                 {
@@ -211,6 +228,11 @@ public sealed class BackupSchedulerService(
                 Level = "Error",
                 Message = ex.ToString(),
             });
+
+            var title = ex is AnomalyDetectedException
+                ? $"ServerBackup: OLASI FİDYE YAZILIMI / KİTLESEL DEĞİŞİM — '{plan.Name}' durduruldu"
+                : $"ServerBackup: '{plan.Name}' yedeklemesi başarısız";
+            notifier.Notify(title, ex.Message, NotificationSeverity.Error);
         }
 
         // Persist the final status even if stoppingToken is already cancelled.

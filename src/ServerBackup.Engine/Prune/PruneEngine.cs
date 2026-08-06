@@ -3,6 +3,7 @@ using ServerBackup.Core.Crypto;
 using ServerBackup.Core.Repository;
 using ServerBackup.Core.Trees;
 using ServerBackup.Data;
+using ServerBackup.Engine.Audit;
 using ServerBackup.Engine.Backup;
 using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Retention;
@@ -41,6 +42,31 @@ public sealed class PruneEngine
             .Select(s => new SnapshotSummary(s.SnapshotId, s.StartedAtUtc, ParseTags(s.Tags)))
             .ToList();
         var keepIds = RetentionEvaluator.SelectSnapshotsToKeep(summaries, policy, DateTimeOffset.UtcNow);
+
+        // Immutability window (plan Faz 11): a snapshot younger than this can
+        // never be deleted, regardless of what the retention policy says —
+        // no override, not even from the panel. This is what makes prune
+        // ransomware-resistant: an attacker with repo access can't just
+        // shorten the policy and immediately wipe everything.
+        var config = await RepositoryManager.ReadConfigAsync(_repoPath, ct);
+        if (config.AppendOnly)
+        {
+            // Strictly stronger than the immutability window: nothing is
+            // ever eligible for deletion, full stop.
+            foreach (var snapshot in allSnapshots)
+            {
+                keepIds.Add(snapshot.SnapshotId);
+            }
+        }
+        else if (config.ImmutabilityWindowDays is { } windowDays)
+        {
+            var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromDays(windowDays);
+            foreach (var snapshot in allSnapshots.Where(s => s.StartedAtUtc >= cutoff))
+            {
+                keepIds.Add(snapshot.SnapshotId);
+            }
+        }
+
         var snapshotsToDelete = allSnapshots.Where(s => !keepIds.Contains(s.SnapshotId)).ToList();
 
         var packSubKey = SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo);
@@ -111,6 +137,17 @@ public sealed class PruneEngine
             db.SnapshotPaths.RemoveRange(db.SnapshotPaths.Where(sp => sp.SnapshotId == snapshot.SnapshotId));
             db.Snapshots.Remove(await db.Snapshots.FindAsync([snapshot.SnapshotId], ct) ?? throw new InvalidOperationException());
             await db.SaveChangesAsync(ct);
+        }
+
+        if (snapshotsToDelete.Count > 0 || packsToDelete.Count > 0 || packsToRepack.Count > 0)
+        {
+            await AuditLogger.RecordAsync(
+                db,
+                "prune",
+                $"{snapshotsToDelete.Count} snapshot silindi, {packsToDelete.Count} pack silindi, " +
+                $"{packsToRepack.Count} pack repack edildi, {bytesFreed:N0} bayt boşaltıldı. " +
+                $"Silinen snapshot'lar: {string.Join(", ", snapshotsToDelete.Select(s => s.SnapshotId))}",
+                ct);
         }
 
         return new PruneResult(
