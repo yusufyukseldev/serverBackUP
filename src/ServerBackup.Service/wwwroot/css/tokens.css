@@ -1,0 +1,113 @@
+:root {
+  /* Nötr — AÇIK tema (taban) */
+  --sidebar:       #EFF1F5;
+  --canvas:        #F7F8FA;
+  --surface:       #FFFFFF;
+  --surface-hover: #F1F3F6;
+  --surface-raised:#FFFFFF;
+  --border-subtle: #ECEEF1;
+  --border:        #DDE1E6;
+  --border-strong: #C3C9D1;
+  --text-muted:    #8A929C;
+  --text-secondary:#5C6570;
+  --text:          #1C2126;
+  --text-strong:   #0D1114;
+
+  --accent:        #2563C9;
+  --accent-bg:     rgba(37,99,201,.10);
+  --accent-border: rgba(37,99,201,.30);
+  --on-accent:     #FFFFFF;
+
+  --success:       #1A7F37;
+  --success-bg:    rgba(26,127,55,.10);
+  --success-border:rgba(26,127,55,.28);
+  --warning:       #9A6700;
+  --warning-bg:    rgba(154,103,0,.10);
+  --warning-border:rgba(154,103,0,.28);
+  --danger:        #C62828;
+  --danger-bg:     rgba(198,40,40,.09);
+  --danger-border: rgba(198,40,40,.28);
+
+  --shadow-2: 0 4px 12px rgba(16,24,40,.08);
+  --shadow-3: 0 16px 40px rgba(16,24,40,.16);
+  --overlay:  rgba(16,24,40,.32);
+
+  /* Tipografi */
+  --font-ui:   "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "Segoe UI Mono", ui-monospace, monospace;
+
+  /* Boşluk */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:24px; --space-6:32px; --space-7:48px;
+
+  /* Geometri */
+  --radius-sm: 3px;
+  --radius-md: 6px;
+
+  /* Yoğunluk — kompakt taban, comfy kullanıcı ayarıdır (R4) */
+  --row-h: 32px;
+  --row-py: 6px;
+
+  /* Hareket */
+  --dur-fast:120ms; --dur-base:180ms; --dur-exit:100ms;
+  --ease-out:cubic-bezier(.2,0,0,1);
+  --ease-in:cubic-bezier(.4,0,1,1);
+}
+
+/* Nötr — KOYU tema (ürün varsayılanı) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sidebar:       #07090C;
+    --canvas:        #0C0F13;
+    --surface:       #151920;
+    --surface-hover: #1B2029;
+    --surface-raised:#1E242D;
+    --border-subtle: #1E232B;
+    --border:        #2A3039;
+    --border-strong: #3A424E;
+    --text-muted:    #6B7480;
+    --text-secondary:#98A2AF;
+    --text:          #E4E8ED;
+    --text-strong:   #F5F7FA;
+
+    --accent:        #5B93F5;
+    --accent-bg:     rgba(91,147,245,.13);
+    --accent-border: rgba(91,147,245,.32);
+    --on-accent:     #0B0D10;
+
+    --success:       #3FB950;
+    --success-bg:    rgba(63,185,80,.13);
+    --success-border:rgba(63,185,80,.30);
+    --warning:       #D29922;
+    --warning-bg:    rgba(210,153,34,.13);
+    --warning-border:rgba(210,153,34,.30);
+    --danger:        #F04E4E;
+    --danger-bg:     rgba(240,78,78,.13);
+    --danger-border: rgba(240,78,78,.32);
+
+    --shadow-2: none;
+    --shadow-3: none;
+    --overlay:  rgba(0,0,0,.55);
+  }
+}
+:root[data-theme="dark"] {
+  --sidebar:#07090C; --canvas:#0C0F13; --surface:#151920; --surface-hover:#1B2029; --surface-raised:#1E242D;
+  --border-subtle:#1E232B; --border:#2A3039; --border-strong:#3A424E;
+  --text-muted:#6B7480; --text-secondary:#98A2AF; --text:#E4E8ED; --text-strong:#F5F7FA;
+  --accent:#5B93F5; --accent-bg:rgba(91,147,245,.13); --accent-border:rgba(91,147,245,.32); --on-accent:#0B0D10;
+  --success:#3FB950; --success-bg:rgba(63,185,80,.13); --success-border:rgba(63,185,80,.30);
+  --warning:#D29922; --warning-bg:rgba(210,153,34,.13); --warning-border:rgba(210,153,34,.30);
+  --danger:#F04E4E;  --danger-bg:rgba(240,78,78,.13);  --danger-border:rgba(240,78,78,.32);
+  --shadow-2:none; --shadow-3:none; --overlay:rgba(0,0,0,.55);
+}
+:root[data-theme="light"] {
+  --sidebar:#EFF1F5; --canvas:#F7F8FA; --surface:#FFFFFF; --surface-hover:#F1F3F6; --surface-raised:#FFFFFF;
+  --border-subtle:#ECEEF1; --border:#DDE1E6; --border-strong:#C3C9D1;
+  --text-muted:#8A929C; --text-secondary:#5C6570; --text:#1C2126; --text-strong:#0D1114;
+  --accent:#2563C9; --accent-bg:rgba(37,99,201,.10); --accent-border:rgba(37,99,201,.30); --on-accent:#FFFFFF;
+  --success:#1A7F37; --success-bg:rgba(26,127,55,.10); --success-border:rgba(26,127,55,.28);
+  --warning:#9A6700; --warning-bg:rgba(154,103,0,.10); --warning-border:rgba(154,103,0,.28);
+  --danger:#C62828;  --danger-bg:rgba(198,40,40,.09);  --danger-border:rgba(198,40,40,.28);
+  --shadow-2:0 4px 12px rgba(16,24,40,.08); --shadow-3:0 16px 40px rgba(16,24,40,.16);
+  --overlay:rgba(16,24,40,.32);
+}

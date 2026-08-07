@@ -5,8 +5,10 @@
 @using ServerBackup.Data
 @using ServerBackup.Data.Entities
 @using ServerBackup.Engine.Retention
+@using ServerBackup.Engine.Scheduling
 @using ServerBackup.Service.Scheduling
 @inject IOptions<ServerBackupOptions> Options
+@inject JobQueue Queue
 
 <h1>Yedekleme Planları</h1>
 
@@ -24,6 +26,7 @@ else
                 <th>Cron</th>
                 <th>Kaynaklar</th>
                 <th>Saklama</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -35,6 +38,11 @@ else
                     <td>@plan.CronSchedule</td>
                     <td>@string.Join(", ", JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson) ?? [])</td>
                     <td>@(plan.RetentionPolicyJson is null ? "-" : "Ayarlı")</td>
+                    <td>
+                        <button @onclick="() => BackupNowAsync(repoPath, plan)" disabled="@(_runningPlanId == plan.PlanId)">
+                            @(_runningPlanId == plan.PlanId ? "Kuyruğa alındı..." : "Şimdi Yedekle")
+                        </button>
+                    </td>
                 </tr>
             }
         </tbody>
@@ -58,8 +66,58 @@ else
         <label>Kaynak Yollar (virgülle ayrılmış)</label>
         <input @bind="_form.SourcePaths" placeholder="C:\Veri, D:\Projeler" />
 
-        <label>Cron İfadesi</label>
-        <input @bind="_form.Cron" placeholder="0 3 * * * (her gün 03:00)" />
+        <label>
+            <input type="checkbox" @bind="_form.UseSimpleScheduler" />
+            Basit zamanlayıcı kullan (gün + saat aralığı + sıklık)
+        </label>
+
+        @if (_form.UseSimpleScheduler)
+        {
+            <div style="margin: 0.5rem 0;">
+                <label>Günler:</label>
+                <span style="display: inline-flex; gap: 0.75rem; margin-left: 0.5rem;">
+                    @foreach (var day in _weekDayOrder)
+                    {
+                        <label style="font-weight: normal;">
+                            <input type="checkbox" checked="@_form.SelectedDays.Contains(day)"
+                                   @onchange="e => ToggleDay(day, (bool)e.Value!)" />
+                            @_dayLabels[day]
+                        </label>
+                    }
+                </span>
+            </div>
+
+            <div style="display: flex; gap: 1rem; align-items: end; margin: 0.5rem 0;">
+                <span>
+                    <label>Başlangıç saati</label>
+                    <input type="number" min="0" max="23" style="width: 5rem;" @bind="_form.StartHour" />
+                </span>
+                <span>
+                    <label>Bitiş saati</label>
+                    <input type="number" min="0" max="23" style="width: 5rem;" @bind="_form.EndHour" />
+                </span>
+                <span>
+                    <label>Sıklık</label>
+                    <select @bind="_form.IntervalHours">
+                        <option value="1">Her saat</option>
+                        <option value="2">2 saatte bir</option>
+                        <option value="3">3 saatte bir</option>
+                        <option value="4">4 saatte bir</option>
+                        <option value="6">6 saatte bir</option>
+                        <option value="8">8 saatte bir</option>
+                        <option value="12">12 saatte bir</option>
+                        <option value="24">Günde 1 kere</option>
+                    </select>
+                </span>
+            </div>
+
+            <p style="font-size: 0.85rem; color: var(--text-muted);">Önizleme: <code>@TryBuildSimpleCron()</code></p>
+        }
+        else
+        {
+            <label>Cron İfadesi</label>
+            <input @bind="_form.Cron" placeholder="0 3 * * * (her gün 03:00)" />
+        }
 
         <label>Keep Daily</label>
         <input type="number" @bind="_form.KeepDaily" />
@@ -81,13 +139,103 @@ else
         public string SourcePaths { get; set; } = "";
         public string Cron { get; set; } = "0 3 * * *";
         public int? KeepDaily { get; set; }
+
+        public bool UseSimpleScheduler { get; set; } = true;
+        public HashSet<DayOfWeek> SelectedDays { get; set; } =
+        [
+            DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday,
+        ];
+        public int StartHour { get; set; } = 8;
+        public int EndHour { get; set; } = 20;
+        public int IntervalHours { get; set; } = 2;
     }
+
+    private readonly DayOfWeek[] _weekDayOrder =
+    [
+        DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
+        DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday,
+    ];
+
+    private readonly Dictionary<DayOfWeek, string> _dayLabels = new()
+    {
+        [DayOfWeek.Monday] = "Pzt", [DayOfWeek.Tuesday] = "Sal", [DayOfWeek.Wednesday] = "Çar",
+        [DayOfWeek.Thursday] = "Per", [DayOfWeek.Friday] = "Cum", [DayOfWeek.Saturday] = "Cmt",
+        [DayOfWeek.Sunday] = "Paz",
+    };
 
     private List<(string RepoPath, PlanEntity Plan)>? _plans;
     private readonly PlanForm _form = new();
     private string? _message;
+    private string? _runningPlanId;
 
-    protected override async Task OnInitializedAsync() => await LoadPlansAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        // <select @bind> only writes back to the model on a user-driven
+        // change event — with a single repo configured that event never
+        // fires, so without this the field stays "" and every submit fails
+        // silent validation ("Tüm alanları doldurun.").
+        _form.RepoPath = Options.Value.Repositories.FirstOrDefault() ?? "";
+        await LoadPlansAsync();
+    }
+
+    private void ToggleDay(DayOfWeek day, bool selected)
+    {
+        if (selected)
+        {
+            _form.SelectedDays.Add(day);
+        }
+        else
+        {
+            _form.SelectedDays.Remove(day);
+        }
+    }
+
+    /// <summary>
+    /// "Günde bir kere" (24 saatte bir) seçilince bitiş saatini başlangıçla
+    /// eşitliyoruz — CronBuilder bunu tek bir sabit saat olarak yorumluyor,
+    /// aralık/adım üretmiyor.
+    private string TryBuildSimpleCron()
+    {
+        try
+        {
+            var endHour = _form.IntervalHours >= 24 ? _form.StartHour : _form.EndHour;
+            return CronBuilder.Build(_form.SelectedDays, _form.StartHour, endHour, _form.IntervalHours >= 24 ? 1 : _form.IntervalHours);
+        }
+        catch (Exception ex)
+        {
+            return $"(geçersiz: {ex.Message})";
+        }
+    }
+
+    private async Task BackupNowAsync(string repoPath, PlanEntity plan)
+    {
+        _message = null;
+        var dbPath = Path.Combine(repoPath, "catalog.db");
+        await using var db = CatalogDbContextFactory.Create(dbPath);
+
+        var alreadyQueued = await db.Jobs.AnyAsync(
+            j => j.PlanId == plan.PlanId && (j.Status == JobStatus.Pending || j.Status == JobStatus.Running));
+        if (alreadyQueued)
+        {
+            _message = $"'{plan.Name}' için zaten bekleyen veya çalışan bir iş var.";
+            return;
+        }
+
+        var jobId = Guid.NewGuid().ToString("n");
+        db.Jobs.Add(new JobEntity
+        {
+            JobId = jobId,
+            PlanId = plan.PlanId,
+            Kind = "backup",
+            Status = JobStatus.Pending,
+        });
+        await db.SaveChangesAsync();
+
+        await Queue.Writer.WriteAsync(new ScheduledJob(repoPath, jobId, plan.PlanId));
+
+        _runningPlanId = plan.PlanId;
+        _message = $"'{plan.Name}' kuyruğa alındı — İş Geçmişi sayfasından ilerlemeyi izleyebilirsin.";
+    }
 
     private async Task LoadPlansAsync()
     {
@@ -114,7 +262,32 @@ else
     private async Task CreatePlanAsync()
     {
         if (string.IsNullOrWhiteSpace(_form.RepoPath) || string.IsNullOrWhiteSpace(_form.Name)
-            || string.IsNullOrWhiteSpace(_form.SourcePaths) || string.IsNullOrWhiteSpace(_form.Cron))
+            || string.IsNullOrWhiteSpace(_form.SourcePaths))
+        {
+            _message = "Tüm alanları doldurun.";
+            return;
+        }
+
+        if (_form.UseSimpleScheduler)
+        {
+            if (_form.SelectedDays.Count == 0)
+            {
+                _message = "En az bir gün seçin.";
+                return;
+            }
+
+            try
+            {
+                var endHour = _form.IntervalHours >= 24 ? _form.StartHour : _form.EndHour;
+                _form.Cron = CronBuilder.Build(_form.SelectedDays, _form.StartHour, endHour, _form.IntervalHours >= 24 ? 1 : _form.IntervalHours);
+            }
+            catch (Exception ex)
+            {
+                _message = $"Zamanlama oluşturulamadı: {ex.Message}";
+                return;
+            }
+        }
+        else if (string.IsNullOrWhiteSpace(_form.Cron))
         {
             _message = "Tüm alanları doldurun.";
             return;
