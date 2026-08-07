@@ -11,6 +11,7 @@
 @implements IDisposable
 @inject IOptions<ServerBackupOptions> Options
 
+<div class="sb-content">
 <h1>Snapshot Gezgini</h1>
 
 <div class="card">
@@ -71,7 +72,7 @@
                 @foreach (var node in _currentNodes.OrderBy(n => n.Name, StringComparer.Ordinal))
                 {
                     <tr>
-                        <td>@(node.Kind == TreeNodeKind.Directory ? "📁" : "📄")</td>
+                        <td><SbIcon Name="@(node.Kind == TreeNodeKind.Directory ? "folder" : "file")" Small="true" /></td>
                         <td>
                             @if (node.Kind == TreeNodeKind.Directory && node.SubTreeBlobIdHex is not null)
                             {
@@ -89,6 +90,7 @@
         </table>
     }
 }
+</div>
 
 @code {
     private string? _selectedRepo;

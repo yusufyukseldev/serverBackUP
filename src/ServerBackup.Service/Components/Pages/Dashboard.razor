@@ -5,6 +5,7 @@
 @using ServerBackup.Service.Scheduling
 @inject IOptions<ServerBackupOptions> Options
 
+<div class="sb-content">
 <h1>Dashboard</h1>
 
 @if (_summaries is null)
@@ -34,6 +35,7 @@ else
         }
     </div>
 }
+</div>
 
 @code {
     private sealed record RepoSummary(string RepoPath, int SnapshotCount, int PackCount, long TotalBytes, string? LastJobStatus);

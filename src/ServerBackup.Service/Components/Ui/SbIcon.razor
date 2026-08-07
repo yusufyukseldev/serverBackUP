@@ -1,0 +1,11 @@
+<svg class="ic @(Small ? "ic-sm" : "")" aria-hidden="true" focusable="false">
+    <use href="icons.svg#i-@Name" />
+</svg>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Name { get; set; } = "";
+
+    [Parameter]
+    public bool Small { get; set; }
+}

@@ -1,13 +1,10 @@
 @inherits LayoutComponentBase
 
-<div class="page">
-    <nav class="sidebar">
-        <div class="brand">ServerBackup</div>
+<div class="sb-app">
+    <aside class="sb-side">
         <NavMenu />
-    </nav>
-    <main>
-        <div class="content">
-            @Body
-        </div>
-    </main>
+    </aside>
+    <div class="sb-main">
+        @Body
+    </div>
 </div>

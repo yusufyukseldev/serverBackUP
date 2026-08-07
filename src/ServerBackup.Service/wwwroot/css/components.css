@@ -1,0 +1,74 @@
+/* Sonnet's port of docs/ui-prototype.html §4 ÜRÜN BİLEŞENLERİ (.sb-*).
+   Ported incrementally, one phase at a time — only the rules a phase's
+   components actually use are added here; the rest lands with R2/R3. */
+
+/* --- İkon --- */
+.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.ic-sm { width: 14px; height: 14px; }
+
+/* --- Durum (V3: dot) --- */
+.sb-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
+.sb-status i { width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex: none; }
+.sb-status--ok      { color: var(--success); }
+.sb-status--run     { color: var(--accent); }
+.sb-status--pending { color: var(--text-muted); }
+.sb-status--pending i { background: transparent; border: 1.5px solid currentColor; width: 8px; height: 8px; }
+.sb-status--warn    { color: var(--warning); }
+.sb-status--err     { color: var(--danger); }
+.sb-status--muted   { color: var(--text-muted); }
+.sb-status--run i { animation: sb-pulse 2s ease-in-out infinite; }
+@keyframes sb-pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+.sb-status b { font-weight: 400; color: var(--text); }
+.sb-status--warn b, .sb-status--err b { color: inherit; }
+
+/* --- Uygulama kabuğu --- */
+.sb-app {
+  display: grid; grid-template-columns: 232px 1fr;
+  height: 100vh;
+  background: var(--canvas);
+  overflow: hidden; position: relative;
+}
+.sb-side { background: var(--sidebar); border-right: 1px solid var(--border); padding: var(--space-4) var(--space-3); display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+
+.sb-nav-count { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; display: grid; place-items: center; border-radius: 999px; background: var(--surface-hover); color: var(--text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.sb-nav-count--err { background: var(--danger-bg); color: var(--danger); }
+
+.sb-repo { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 9px; font-size: 12px; color: var(--text-secondary); border-radius: var(--radius-sm); }
+.sb-repo:hover { background: var(--surface-hover); }
+.sb-repo-n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-repo-d { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 11.5px; }
+.sb-repo-d.is-warn { color: var(--warning); }
+/* Şeritte durum yalnızca noktadır — rozet dolgusu buraya taşınmaz. */
+.sb-repo .sb-status { padding: 0; height: auto; background: transparent; }
+.sb-repo .sb-status i { display: block; }
+.sb-brand { font-size: 14px; font-weight: 600; color: var(--text-strong); letter-spacing: -.01em; padding: 0 9px var(--space-4); }
+.sb-navgroup { font-size: 11.5px; font-weight: 500; color: var(--text-muted); letter-spacing: .04em; padding: var(--space-4) 9px 6px; }
+.sb-navgroup:first-of-type { padding-top: 0; }
+.sb-nav {
+  display: flex; align-items: center; gap: 9px;
+  height: 32px; padding: 0 9px; border-radius: var(--radius-sm);
+  color: var(--text-secondary); font-size: 13px; cursor: pointer;
+  background: none; border: 0; width: 100%; text-align: left; position: relative;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.sb-nav:hover { background: var(--surface-hover); color: var(--text); }
+.sb-nav .ic { color: var(--text-muted); }
+.sb-nav[aria-current="page"] { color: var(--text-strong); font-weight: 500; }
+.sb-nav[aria-current="page"] .ic { color: var(--accent); }
+.sb-nav[aria-current="page"] { background: var(--surface-hover); }
+.sb-nav[aria-current="page"]::before { content:""; position: absolute; left: -12px; top: 6px; bottom: 6px; width: 2px; background: var(--accent); border-radius: 0 2px 2px 0; }
+.sb-nav[disabled] { opacity: .5; cursor: not-allowed; }
+.sb-nav[disabled]:hover { background: none; color: var(--text-secondary); }
+
+.sb-side-foot { margin-top: auto; padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 2px; }
+.sb-side-user { font-size: 12px; color: var(--text-muted); padding: 6px 9px 0; font-family: var(--font-mono); }
+.sb-side-ver { font-size: 11.5px; color: var(--text-muted); padding: 0 9px; }
+
+.sb-main { display: flex; flex-direction: column; min-width: 0; position: relative; }
+.sb-pagehead { display: flex; align-items: center; gap: var(--space-3); height: 56px; padding: 0 var(--space-5); border-bottom: 1px solid var(--border); background: var(--canvas); flex: none; }
+.sb-pagehead h1 { font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -.01em; margin: 0; color: var(--text-strong); }
+.sb-pagehead .sp { flex: 1; }
+.sb-content { flex: 1; overflow-y: auto; padding: var(--space-5); }
+.sb-content--form { max-width: 640px; }
+.sb-row { display: flex; align-items: center; gap: var(--space-3); }

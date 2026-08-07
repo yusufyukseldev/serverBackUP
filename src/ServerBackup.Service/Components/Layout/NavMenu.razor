@@ -1,8 +1,151 @@
-<ul class="nav-menu">
-    <li><NavLink href="" Match="NavLinkMatch.All">Dashboard</NavLink></li>
-    <li><NavLink href="repositories">Depolar</NavLink></li>
-    <li><NavLink href="plans">Planlar</NavLink></li>
-    <li><NavLink href="jobs">İş Geçmişi</NavLink></li>
-    <li><NavLink href="snapshots">Snapshot'lar</NavLink></li>
-    <li><NavLink href="restore">Geri Yükle</NavLink></li>
-</ul>
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@using ServerBackup.Data
+@using ServerBackup.Service.Scheduling
+@implements IDisposable
+@inject IOptions<ServerBackupOptions> Options
+
+<div class="sb-brand">ServerBackup</div>
+
+<div class="sb-navgroup">GENEL</div>
+<NavLink class="sb-nav" href="" Match="NavLinkMatch.All"><SbIcon Name="gauge" /> Genel bakış</NavLink>
+
+<div class="sb-navgroup">KORUMA</div>
+<NavLink class="sb-nav" href="plans"><SbIcon Name="cal" /> Planlar</NavLink>
+<NavLink class="sb-nav" href="repositories"><SbIcon Name="db" /> Depolar</NavLink>
+
+<div class="sb-navgroup">VERİ</div>
+<NavLink class="sb-nav" href="snapshots"><SbIcon Name="folder" /> Snapshot'lar</NavLink>
+<NavLink class="sb-nav" href="restore"><SbIcon Name="restore" /> Geri yükleme</NavLink>
+
+<div class="sb-navgroup">KAYITLAR</div>
+<NavLink class="sb-nav" href="jobs">
+    <SbIcon Name="hist" /> İş geçmişi
+    <span class="sb-nav-count">@_activeJobCount</span>
+</NavLink>
+<NavLink class="sb-nav" href="alerts">
+    <SbIcon Name="alert" /> Uyarılar
+    <span class="sb-nav-count @(_failedJobCount > 0 ? "sb-nav-count--err" : "")">@_failedJobCount</span>
+</NavLink>
+
+<div class="sb-navgroup">DEPOLAR</div>
+@foreach (var repo in _repos)
+{
+    <div class="sb-repo" title="@repo.RepoPath">
+        <span class="sb-status sb-status--@repo.StatusClass"><i></i></span>
+        <span class="sb-repo-n">@repo.DisplayName</span>
+        <span class="sb-repo-d @(repo.DiskPercent is >= 85 ? "is-warn" : "")">@(repo.DiskPercent is { } p ? $"%{p}" : "—")</span>
+    </div>
+}
+
+<div class="sb-side-foot">
+    <button type="button" class="sb-nav" disabled title="Henüz eklenmedi">
+        <SbIcon Name="gear" /> Ayarlar
+    </button>
+    <div class="sb-side-user">@(_userName ?? "—")</div>
+    <div class="sb-side-ver">Sürüm @_version</div>
+</div>
+
+@code {
+    private sealed record RepoNavInfo(string DisplayName, string RepoPath, string StatusClass, int? DiskPercent);
+
+    private List<RepoNavInfo> _repos = [];
+    private int _activeJobCount;
+    private int _failedJobCount;
+    private string? _userName;
+    private string _version = "-";
+    private Timer? _timer;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            _userName = state.User.Identity?.IsAuthenticated == true ? state.User.Identity.Name : null;
+        }
+
+        _version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "-";
+
+        await RefreshAsync();
+        _timer = new Timer(async _ => await InvokeAsync(RefreshAsync), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task RefreshAsync()
+    {
+        var repos = new List<RepoNavInfo>();
+        var activeCount = 0;
+        var failedCount = 0;
+
+        foreach (var repoPath in Options.Value.Repositories)
+        {
+            var dbPath = Path.Combine(repoPath, "catalog.db");
+            if (!File.Exists(dbPath))
+            {
+                repos.Add(new RepoNavInfo(DisplayName(repoPath), repoPath, "muted", DiskPercent(repoPath)));
+                continue;
+            }
+
+            await using var db = CatalogDbContextFactory.Create(dbPath);
+            var jobs = await db.Jobs.AsNoTracking().ToListAsync();
+            var lastJob = jobs.OrderByDescending(j => j.StartedAtUtc).FirstOrDefault();
+
+            activeCount += jobs.Count(j => j.Status is "Running" or "Pending");
+            failedCount += jobs.Count(j => j.Status == "Failed");
+
+            repos.Add(new RepoNavInfo(DisplayName(repoPath), repoPath, StatusClass(lastJob?.Status), DiskPercent(repoPath)));
+        }
+
+        _repos = repos;
+        _activeJobCount = activeCount;
+        _failedJobCount = failedCount;
+        StateHasChanged();
+    }
+
+    private static string DisplayName(string repoPath)
+    {
+        var trimmed = repoPath.TrimEnd('\\', '/');
+        var name = Path.GetFileName(trimmed);
+        return string.IsNullOrEmpty(name) ? trimmed : name;
+    }
+
+    private static string StatusClass(string? status) => status switch
+    {
+        "Succeeded" => "ok",
+        "Running" => "run",
+        "Pending" => "pending",
+        "Failed" => "err",
+        _ => "muted",
+    };
+
+    /// <summary>DriveInfo throws on UNC roots it can't resolve — SMB repos degrade to "unknown" rather than crashing the sidebar.</summary>
+    private static int? DiskPercent(string repoPath)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(repoPath);
+            if (string.IsNullOrEmpty(root))
+            {
+                return null;
+            }
+
+            var drive = new DriveInfo(root);
+            if (!drive.IsReady || drive.TotalSize == 0)
+            {
+                return null;
+            }
+
+            var used = drive.TotalSize - drive.AvailableFreeSpace;
+            return (int)Math.Round(used * 100.0 / drive.TotalSize);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

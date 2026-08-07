@@ -1,11 +1,15 @@
 @page "/repositories"
+@using System.Security.Cryptography
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Options
 @using ServerBackup.Data
+@using ServerBackup.Engine.Backup
 @using ServerBackup.Engine.Repository
+@using ServerBackup.Engine.Scanning
 @using ServerBackup.Service.Scheduling
 @inject IOptions<ServerBackupOptions> Options
 
+<div class="sb-content">
 <h1>Depolar</h1>
 
 @if (_rows is null)
@@ -23,6 +27,7 @@ else
                 <th>Pack</th>
                 <th>Blob</th>
                 <th>Snapshot</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -53,16 +58,120 @@ else
                     <td>@row.PackCount</td>
                     <td>@row.BlobCount</td>
                     <td>@row.SnapshotCount</td>
+                    <td>
+                        @if (row.Exists)
+                        {
+                            <button @onclick="() => ToggleBackupForm(row.RepoPath)">Yedek Al</button>
+                        }
+                    </td>
                 </tr>
+                @if (_backupFormRepo == row.RepoPath)
+                {
+                    <tr>
+                        <td colspan="7">
+                            <div class="card">
+                                <label>Kaynak Yollar (virgülle ayrılmış)</label>
+                                <input @bind="_backupSourcePaths" placeholder="C:\Veri, D:\Projeler" style="width: 100%;" />
+
+                                @if (!row.UnattendedEnabled)
+                                {
+                                    <label>Parola</label>
+                                    <input type="password" @bind="_backupPassword" />
+                                }
+
+                                <div style="margin-top: 0.5rem;">
+                                    <button @onclick="() => RunBackupNowAsync(row.RepoPath, row.UnattendedEnabled)" disabled="@_backupRunning">
+                                        @(_backupRunning ? "Yedekleniyor..." : "Şimdi Başlat")
+                                    </button>
+                                </div>
+
+                                @if (_backupMessage is not null)
+                                {
+                                    <p>@_backupMessage</p>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
             }
         </tbody>
     </table>
 }
+</div>
 
 @code {
     private sealed record RepoRow(string RepoPath, bool Exists, bool UnattendedEnabled, int PackCount, int BlobCount, int SnapshotCount);
 
     private List<RepoRow>? _rows;
+    private string? _backupFormRepo;
+    private string _backupSourcePaths = "";
+    private string _backupPassword = "";
+    private bool _backupRunning;
+    private string? _backupMessage;
+
+    private void ToggleBackupForm(string repoPath)
+    {
+        _backupFormRepo = _backupFormRepo == repoPath ? null : repoPath;
+        _backupSourcePaths = "";
+        _backupPassword = "";
+        _backupMessage = null;
+    }
+
+    /// <summary>
+    /// Ad-hoc "yedek al" click from the panel — no saved Plan required. Chains
+    /// to the repo's most recent snapshot (regardless of which plan made it)
+    /// so this run is still incremental, matching what a scheduled plan run
+    /// would do (see BackupSchedulerService).
+    private async Task RunBackupNowAsync(string repoPath, bool unattended)
+    {
+        _backupMessage = null;
+
+        var sourcePaths = _backupSourcePaths.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (sourcePaths.Length == 0)
+        {
+            _backupMessage = "En az bir kaynak yol girin.";
+            return;
+        }
+
+        byte[] masterKey;
+        try
+        {
+            masterKey = unattended
+                ? UnattendedKeyStore.Unlock(repoPath)
+                : await RepositoryKeyStore.UnlockAsync(repoPath, _backupPassword);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _backupMessage = "Parola yanlış.";
+            return;
+        }
+
+        _backupRunning = true;
+        try
+        {
+            await using var db = CatalogDbContextFactory.Create(Path.Combine(repoPath, "catalog.db"));
+            var parentSnapshotId = (await db.Snapshots.AsNoTracking().ToListAsync())
+                .OrderByDescending(s => s.StartedAtUtc)
+                .FirstOrDefault()
+                ?.SnapshotId;
+
+            var engine = new BackupEngine(new LocalSourceProvider(), repoPath, masterKey);
+            var snapshotId = await engine.RunAsync(sourcePaths, parentSnapshotId);
+
+            _backupMessage = $"Tamamlandı — snapshot {snapshotId}.";
+            _backupFormRepo = null;
+            await OnInitializedAsync();
+        }
+        catch (Exception ex)
+        {
+            _backupMessage = $"Yedekleme başarısız: {ex.Message}";
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(masterKey);
+            _backupRunning = false;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {

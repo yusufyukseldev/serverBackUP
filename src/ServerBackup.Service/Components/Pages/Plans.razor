@@ -10,6 +10,7 @@
 @inject IOptions<ServerBackupOptions> Options
 @inject JobQueue Queue
 
+<div class="sb-content">
 <h1>Yedekleme Planları</h1>
 
 @if (_plans is null)
@@ -129,6 +130,7 @@ else
     {
         <p>@_message</p>
     }
+</div>
 </div>
 
 @code {

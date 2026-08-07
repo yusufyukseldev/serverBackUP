@@ -9,6 +9,7 @@
     <AnalysisLevel>latest</AnalysisLevel>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <Version>0.10.0</Version>
   </PropertyGroup>
 
   <!-- Windows-only APIs (VSS, ACL, DPAPI, Windows Service) are used throughout this project by design. -->
