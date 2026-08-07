@@ -1,0 +1,37 @@
+<div class="sb-field @WidthClass">
+    <label>@Label</label>
+    @ChildContent
+    @if (Error is not null)
+    {
+        <span class="sb-hint sb-hint--error">@Error</span>
+    }
+    else if (Hint is not null)
+    {
+        <span class="sb-hint">@Hint</span>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = "";
+
+    [Parameter]
+    public string? Hint { get; set; }
+
+    [Parameter]
+    public string? Error { get; set; }
+
+    [Parameter]
+    public SbFieldWidth Width { get; set; } = SbFieldWidth.Lg;
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private string WidthClass => Width switch
+    {
+        SbFieldWidth.Xs => "w-xs",
+        SbFieldWidth.Sm => "w-sm",
+        SbFieldWidth.Md => "w-md",
+        _ => "",
+    };
+}

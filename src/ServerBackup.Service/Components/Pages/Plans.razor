@@ -40,9 +40,12 @@ else
                     <td>@string.Join(", ", JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson) ?? [])</td>
                     <td>@(plan.RetentionPolicyJson is null ? "-" : "Ayarlı")</td>
                     <td>
-                        <button @onclick="() => BackupNowAsync(repoPath, plan)" disabled="@(_runningPlanId == plan.PlanId)">
+                        <SbButton
+                            OnClick="() => BackupNowAsync(repoPath, plan)"
+                            Disabled="@(_runningPlanId == plan.PlanId)"
+                            DisabledReason="@(_runningPlanId == plan.PlanId ? "Zaten kuyrukta" : null)">
                             @(_runningPlanId == plan.PlanId ? "Kuyruğa alındı..." : "Şimdi Yedekle")
-                        </button>
+                        </SbButton>
                     </td>
                 </tr>
             }
@@ -50,86 +53,93 @@ else
     </table>
 }
 
-<div class="card">
-    <h2>Yeni Plan</h2>
+<div class="sb-card">
+    <div class="sb-card-head"><h3>Yeni Plan</h3></div>
+    <div class="sb-card-body">
     <EditForm Model="_form" OnValidSubmit="CreatePlanAsync">
-        <label>Depo</label>
-        <select @bind="_form.RepoPath">
-            @foreach (var repoPath in Options.Value.Repositories)
-            {
-                <option value="@repoPath">@repoPath</option>
-            }
-        </select>
-
-        <label>Plan Adı</label>
-        <input @bind="_form.Name" />
-
-        <label>Kaynak Yollar (virgülle ayrılmış)</label>
-        <input @bind="_form.SourcePaths" placeholder="C:\Veri, D:\Projeler" />
-
-        <label>
-            <input type="checkbox" @bind="_form.UseSimpleScheduler" />
-            Basit zamanlayıcı kullan (gün + saat aralığı + sıklık)
-        </label>
-
-        @if (_form.UseSimpleScheduler)
-        {
-            <div style="margin: 0.5rem 0;">
-                <label>Günler:</label>
-                <span style="display: inline-flex; gap: 0.75rem; margin-left: 0.5rem;">
-                    @foreach (var day in _weekDayOrder)
+        <div class="sb-stack">
+            <SbField Label="Depo">
+                <select class="sb-select" @bind="_form.RepoPath">
+                    @foreach (var repoPath in Options.Value.Repositories)
                     {
-                        <label style="font-weight: normal;">
-                            <input type="checkbox" checked="@_form.SelectedDays.Contains(day)"
-                                   @onchange="e => ToggleDay(day, (bool)e.Value!)" />
-                            @_dayLabels[day]
-                        </label>
+                        <option value="@repoPath">@repoPath</option>
                     }
-                </span>
-            </div>
+                </select>
+            </SbField>
 
-            <div style="display: flex; gap: 1rem; align-items: end; margin: 0.5rem 0;">
-                <span>
-                    <label>Başlangıç saati</label>
-                    <input type="number" min="0" max="23" style="width: 5rem;" @bind="_form.StartHour" />
-                </span>
-                <span>
-                    <label>Bitiş saati</label>
-                    <input type="number" min="0" max="23" style="width: 5rem;" @bind="_form.EndHour" />
-                </span>
-                <span>
-                    <label>Sıklık</label>
-                    <select @bind="_form.IntervalHours">
-                        <option value="1">Her saat</option>
-                        <option value="2">2 saatte bir</option>
-                        <option value="3">3 saatte bir</option>
-                        <option value="4">4 saatte bir</option>
-                        <option value="6">6 saatte bir</option>
-                        <option value="8">8 saatte bir</option>
-                        <option value="12">12 saatte bir</option>
-                        <option value="24">Günde 1 kere</option>
-                    </select>
-                </span>
-            </div>
+            <SbField Label="Plan Adı">
+                <input class="sb-input" @bind="_form.Name" />
+            </SbField>
 
-            <p style="font-size: 0.85rem; color: var(--text-muted);">Önizleme: <code>@TryBuildSimpleCron()</code></p>
-        }
-        else
-        {
-            <label>Cron İfadesi</label>
-            <input @bind="_form.Cron" placeholder="0 3 * * * (her gün 03:00)" />
-        }
+            <SbField Label="Kaynak Yollar (virgülle ayrılmış)">
+                <input class="sb-input" @bind="_form.SourcePaths" placeholder="C:\Veri, D:\Projeler" />
+            </SbField>
 
-        <label>Keep Daily</label>
-        <input type="number" @bind="_form.KeepDaily" />
+            <label>
+                <input type="checkbox" @bind="_form.UseSimpleScheduler" />
+                Basit zamanlayıcı kullan (gün + saat aralığı + sıklık)
+            </label>
 
-        <button type="submit">Plan Oluştur</button>
+            @if (_form.UseSimpleScheduler)
+            {
+                <div class="sb-stack">
+                    <SbField Label="Günler">
+                        <div class="sb-row">
+                            @foreach (var day in _weekDayOrder)
+                            {
+                                <label>
+                                    <input type="checkbox" checked="@_form.SelectedDays.Contains(day)"
+                                           @onchange="e => ToggleDay(day, (bool)e.Value!)" />
+                                    @_dayLabels[day]
+                                </label>
+                            }
+                        </div>
+                    </SbField>
+
+                    <div class="sb-row">
+                        <SbField Label="Başlangıç saati" Width="SbFieldWidth.Xs">
+                            <input type="number" min="0" max="23" class="sb-input" @bind="_form.StartHour" />
+                        </SbField>
+                        <SbField Label="Bitiş saati" Width="SbFieldWidth.Xs">
+                            <input type="number" min="0" max="23" class="sb-input" @bind="_form.EndHour" />
+                        </SbField>
+                        <SbField Label="Sıklık" Width="SbFieldWidth.Sm">
+                            <select class="sb-select" @bind="_form.IntervalHours">
+                                <option value="1">Her saat</option>
+                                <option value="2">2 saatte bir</option>
+                                <option value="3">3 saatte bir</option>
+                                <option value="4">4 saatte bir</option>
+                                <option value="6">6 saatte bir</option>
+                                <option value="8">8 saatte bir</option>
+                                <option value="12">12 saatte bir</option>
+                                <option value="24">Günde 1 kere</option>
+                            </select>
+                        </SbField>
+                    </div>
+
+                    <p class="sb-hint">Önizleme: <code>@TryBuildSimpleCron()</code></p>
+                </div>
+            }
+            else
+            {
+                <SbField Label="Cron İfadesi">
+                    <input class="sb-input" @bind="_form.Cron" placeholder="0 3 * * * (her gün 03:00)" />
+                </SbField>
+            }
+
+            <SbField Label="Keep Daily" Width="SbFieldWidth.Xs">
+                <input type="number" class="sb-input" @bind="_form.KeepDaily" />
+            </SbField>
+
+            <button type="submit" class="sb-btn sb-btn--primary">Plan Oluştur</button>
+        </div>
     </EditForm>
 
     @if (_message is not null)
     {
         <p>@_message</p>
     }
+    </div>
 </div>
 </div>
 

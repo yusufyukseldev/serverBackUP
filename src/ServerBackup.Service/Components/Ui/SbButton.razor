@@ -1,0 +1,50 @@
+<button type="button" class="sb-btn @VariantClass @SizeClass" disabled="@Disabled" title="@DisabledReason" @onclick="OnClick">
+    @if (Icon is not null)
+    {
+        <SbIcon Name="@Icon" Small="@(Size == SbButtonSize.Sm)" />
+    }
+    @ChildContent
+</button>
+
+@code {
+    [Parameter]
+    public SbButtonVariant Variant { get; set; } = SbButtonVariant.Default;
+
+    [Parameter]
+    public SbButtonSize Size { get; set; } = SbButtonSize.Md;
+
+    [Parameter]
+    public string? Icon { get; set; }
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    [Parameter]
+    public string? DisabledReason { get; set; }
+
+    [Parameter]
+    public EventCallback OnClick { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private string VariantClass => Variant switch
+    {
+        SbButtonVariant.Primary => "sb-btn--primary",
+        SbButtonVariant.Subtle => "sb-btn--subtle",
+        SbButtonVariant.Danger => "sb-btn--danger",
+        SbButtonVariant.DangerOutline => "sb-btn--danger-outline",
+        _ => "",
+    };
+
+    private string SizeClass => Size == SbButtonSize.Sm ? "sb-btn--sm" : "";
+
+    /// <summary>A disabled control with no stated reason is a dead end for the person clicking it — design-system.md B1 requires the title always explain why.</summary>
+    protected override void OnParametersSet()
+    {
+        if (Disabled && string.IsNullOrWhiteSpace(DisabledReason))
+        {
+            throw new InvalidOperationException("SbButton: Disabled iken DisabledReason zorunludur.");
+        }
+    }
+}

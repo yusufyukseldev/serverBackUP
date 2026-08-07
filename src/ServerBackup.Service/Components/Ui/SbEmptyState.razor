@@ -1,0 +1,18 @@
+<div class="sb-empty">
+    <p>@Message</p>
+    @if (ActionText is not null)
+    {
+        <SbButton Variant="SbButtonVariant.Primary" OnClick="OnAction">@ActionText</SbButton>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Message { get; set; } = "";
+
+    [Parameter]
+    public string? ActionText { get; set; }
+
+    [Parameter]
+    public EventCallback OnAction { get; set; }
+}

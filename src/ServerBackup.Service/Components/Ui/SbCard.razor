@@ -1,0 +1,39 @@
+<div class="sb-card">
+    @if (Title is not null || HeaderActions is not null)
+    {
+        <div class="sb-card-head">
+            <div>
+                @if (Title is not null)
+                {
+                    <h3>@Title</h3>
+                }
+                @if (Description is not null)
+                {
+                    <div class="sb-hint">@Description</div>
+                }
+            </div>
+            <div class="sp"></div>
+            @HeaderActions
+        </div>
+    }
+    <div class="sb-card-body @(Flush ? "sb-card-body--flush" : "")">
+        @ChildContent
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string? Title { get; set; }
+
+    [Parameter]
+    public string? Description { get; set; }
+
+    [Parameter]
+    public RenderFragment? HeaderActions { get; set; }
+
+    [Parameter]
+    public bool Flush { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

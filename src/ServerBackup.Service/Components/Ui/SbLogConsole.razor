@@ -1,0 +1,19 @@
+<div class="sb-log">
+    @foreach (var line in Lines)
+    {
+        <div class="@LineClass(line.Level)"><time>@line.At.ToLocalTime().ToString("HH:mm:ss")</time> @line.Message</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<LogLine> Lines { get; set; } = [];
+
+    /// <summary>design-system.md B12 — only HATA/UYARI lines get color, everything else stays neutral.</summary>
+    private static string LineClass(string level) => level switch
+    {
+        "HATA" => "lv-err",
+        "UYARI" => "lv-warn",
+        _ => "",
+    };
+}

@@ -1,0 +1,43 @@
+<div class="sb-banner sb-banner--@ToneClass">
+    @if (Icon is not null)
+    {
+        <SbIcon Name="@Icon" />
+    }
+    <div>
+        <div class="sb-banner-t">@Title</div>
+        @if (Body is not null)
+        {
+            <div class="sb-banner-b">@Body</div>
+        }
+    </div>
+    @if (Action is not null)
+    {
+        <div class="sp"></div>
+        @Action
+    }
+</div>
+
+@code {
+    [Parameter]
+    public SbBannerTone Tone { get; set; } = SbBannerTone.Neutral;
+
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = "";
+
+    [Parameter]
+    public string? Body { get; set; }
+
+    [Parameter]
+    public string? Icon { get; set; }
+
+    [Parameter]
+    public RenderFragment? Action { get; set; }
+
+    private string ToneClass => Tone switch
+    {
+        SbBannerTone.Ok => "ok",
+        SbBannerTone.Warn => "warn",
+        SbBannerTone.Err => "err",
+        _ => "neutral",
+    };
+}

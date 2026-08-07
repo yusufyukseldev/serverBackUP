@@ -1,0 +1,11 @@
+<div class="sb-stack">
+    @for (var i = 0; i < Rows; i++)
+    {
+        <div class="sb-skel"></div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public int Rows { get; set; } = 5;
+}

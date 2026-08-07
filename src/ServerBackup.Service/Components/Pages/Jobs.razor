@@ -37,7 +37,7 @@ else
                 <tr>
                     <td>@repoPath</td>
                     <td>@job.JobId</td>
-                    <td><span class="badge @StatusBadgeClass(job.Status)">@job.Status</span></td>
+                    <td><SbStatusChip Status="@job.Status" /></td>
                     <td>@(job.StartedAtUtc?.ToString("u") ?? "-")</td>
                     <td>@(job.FinishedAtUtc?.ToString("u") ?? "-")</td>
                     <td>@(job.ErrorMessage ?? "-")</td>
@@ -80,14 +80,6 @@ else
         _jobs = jobs.OrderByDescending(j => j.Item2.StartedAtUtc).ToList();
         StateHasChanged();
     }
-
-    private static string StatusBadgeClass(string status) => status switch
-    {
-        "Succeeded" => "badge-ok",
-        "Failed" => "badge-err",
-        "Running" or "Pending" => "badge-warn",
-        _ => "badge-muted",
-    };
 
     public void Dispose() => _timer?.Dispose();
 }

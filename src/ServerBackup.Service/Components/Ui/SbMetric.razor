@@ -1,0 +1,19 @@
+<div class="sb-metric">
+    <div class="sb-metric-label">@Label</div>
+    <div class="sb-metric-value">@Value</div>
+    @if (Sub is not null)
+    {
+        <div class="sb-metric-sub">@Sub</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Label { get; set; } = "";
+
+    [Parameter, EditorRequired]
+    public string Value { get; set; } = "";
+
+    [Parameter]
+    public string? Sub { get; set; }
+}

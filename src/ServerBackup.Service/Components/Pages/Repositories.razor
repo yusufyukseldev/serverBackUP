@@ -61,7 +61,7 @@ else
                     <td>
                         @if (row.Exists)
                         {
-                            <button @onclick="() => ToggleBackupForm(row.RepoPath)">Yedek Al</button>
+                            <SbButton OnClick="() => ToggleBackupForm(row.RepoPath)">Yedek Al</SbButton>
                         }
                     </td>
                 </tr>
@@ -69,21 +69,24 @@ else
                 {
                     <tr>
                         <td colspan="7">
-                            <div class="card">
-                                <label>Kaynak Yollar (virgülle ayrılmış)</label>
-                                <input @bind="_backupSourcePaths" placeholder="C:\Veri, D:\Projeler" style="width: 100%;" />
+                            <div class="sb-stack">
+                                <SbField Label="Kaynak Yollar (virgülle ayrılmış)">
+                                    <input class="sb-input" @bind="_backupSourcePaths" placeholder="C:\Veri, D:\Projeler" />
+                                </SbField>
 
                                 @if (!row.UnattendedEnabled)
                                 {
-                                    <label>Parola</label>
-                                    <input type="password" @bind="_backupPassword" />
+                                    <SbField Label="Parola">
+                                        <input class="sb-input" type="password" @bind="_backupPassword" />
+                                    </SbField>
                                 }
 
-                                <div style="margin-top: 0.5rem;">
-                                    <button @onclick="() => RunBackupNowAsync(row.RepoPath, row.UnattendedEnabled)" disabled="@_backupRunning">
-                                        @(_backupRunning ? "Yedekleniyor..." : "Şimdi Başlat")
-                                    </button>
-                                </div>
+                                <SbButton
+                                    OnClick="() => RunBackupNowAsync(row.RepoPath, row.UnattendedEnabled)"
+                                    Disabled="@_backupRunning"
+                                    DisabledReason="@(_backupRunning ? "Yedekleme zaten sürüyor" : null)">
+                                    @(_backupRunning ? "Yedekleniyor..." : "Şimdi Başlat")
+                                </SbButton>
 
                                 @if (_backupMessage is not null)
                                 {

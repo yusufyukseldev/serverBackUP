@@ -1,0 +1,48 @@
+<SbDialog Title="@Title" Open="true" OnClose="OnCancel" Size="SbDialogSize.Sm">
+    <ChildContent>
+        <p>@Consequence</p>
+        @if (!string.IsNullOrEmpty(ConfirmWord))
+        {
+            <SbField Label="@($"Onaylamak için \"{ConfirmWord}\" yazın")">
+                <input class="sb-input sb-input--mono" value="@_typed" @oninput="OnTypedChanged" />
+            </SbField>
+        }
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="OnCancel">Vazgeç</SbButton>
+        <SbButton
+            Variant="SbButtonVariant.Danger"
+            Disabled="@(!CanConfirm)"
+            DisabledReason="@(CanConfirm ? null : $"Onaylamak için \"{ConfirmWord}\" yazın")"
+            OnClick="OnConfirm">
+            @ConfirmLabel
+        </SbButton>
+    </Footer>
+</SbDialog>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = "";
+
+    [Parameter, EditorRequired]
+    public string Consequence { get; set; } = "";
+
+    [Parameter]
+    public string? ConfirmWord { get; set; }
+
+    [Parameter, EditorRequired]
+    public string ConfirmLabel { get; set; } = "";
+
+    [Parameter, EditorRequired]
+    public EventCallback OnConfirm { get; set; }
+
+    /// <summary>Not in the brief's literal signature list, but a "Vazgeç" button that calls nothing isn't a working dialog — added as the minimal completion needed for B9's cancel path.</summary>
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    private string _typed = "";
+
+    private bool CanConfirm => string.IsNullOrEmpty(ConfirmWord) || _typed == ConfirmWord;
+
+    private void OnTypedChanged(ChangeEventArgs e) => _typed = e.Value?.ToString() ?? "";
+}

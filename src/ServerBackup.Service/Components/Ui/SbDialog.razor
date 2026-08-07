@@ -1,0 +1,43 @@
+@if (Open)
+{
+    <div class="sb-overlay">
+        <div class="sb-dialog @(Size == SbDialogSize.Sm ? "sb-dialog--sm" : "")">
+            <div class="sb-dialog-head">
+                <h3>@Title</h3>
+                @if (Description is not null)
+                {
+                    <p>@Description</p>
+                }
+            </div>
+            <div class="sb-dialog-body">
+                @ChildContent
+            </div>
+            <div class="sb-dialog-foot">
+                @Footer
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = "";
+
+    [Parameter]
+    public string? Description { get; set; }
+
+    [Parameter]
+    public bool Open { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    [Parameter]
+    public SbDialogSize Size { get; set; } = SbDialogSize.Md;
+
+    [Parameter, EditorRequired]
+    public RenderFragment Footer { get; set; } = default!;
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

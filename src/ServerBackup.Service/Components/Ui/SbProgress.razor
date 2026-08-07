@@ -1,0 +1,19 @@
+<div class="sb-prog">
+    <div class="sb-prog-track">
+        <div class="sb-prog-fill" style="width:@(Percent.ToString(System.Globalization.CultureInfo.InvariantCulture))%"></div>
+    </div>
+    <div class="sb-prog-text">@Text</div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public long Value { get; set; }
+
+    [Parameter, EditorRequired]
+    public long Max { get; set; }
+
+    [Parameter, EditorRequired]
+    public string Text { get; set; } = "";
+
+    private double Percent => Max <= 0 ? 0 : Math.Clamp(Value * 100.0 / Max, 0, 100);
+}

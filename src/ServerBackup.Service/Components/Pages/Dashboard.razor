@@ -2,6 +2,7 @@
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Options
 @using ServerBackup.Data
+@using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
 @inject IOptions<ServerBackupOptions> Options
 
@@ -24,11 +25,11 @@ else
             <div class="card">
                 <div class="metric-label">@s.RepoPath</div>
                 <div class="metric-value">@s.SnapshotCount</div>
-                <div class="metric-label">snapshot · @s.PackCount pack · @FormatBytes(s.TotalBytes)</div>
+                <div class="metric-label">snapshot · @s.PackCount pack · @Fmt.Bytes(s.TotalBytes)</div>
                 @if (s.LastJobStatus is not null)
                 {
-                    <div style="margin-top: 0.5rem;">
-                        Son iş: <span class="badge @StatusBadgeClass(s.LastJobStatus)">@s.LastJobStatus</span>
+                    <div class="sb-row">
+                        Son iş: <SbStatusChip Status="@s.LastJobStatus" />
                     </div>
                 }
             </div>
@@ -68,26 +69,4 @@ else
 
         _summaries = summaries;
     }
-
-    private static string FormatBytes(long bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        double value = bytes;
-        var unitIndex = 0;
-        while (value >= 1024 && unitIndex < units.Length - 1)
-        {
-            value /= 1024;
-            unitIndex++;
-        }
-
-        return $"{value:0.#} {units[unitIndex]}";
-    }
-
-    private static string StatusBadgeClass(string status) => status switch
-    {
-        "Succeeded" => "badge-ok",
-        "Failed" => "badge-err",
-        "Running" or "Pending" => "badge-warn",
-        _ => "badge-muted",
-    };
 }

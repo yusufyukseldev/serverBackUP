@@ -16,10 +16,18 @@
 .sb-status--warn    { color: var(--warning); }
 .sb-status--err     { color: var(--danger); }
 .sb-status--muted   { color: var(--text-muted); }
+.sb-status--locked  { color: var(--text-secondary); }
 .sb-status--run i { animation: sb-pulse 2s ease-in-out infinite; }
 @keyframes sb-pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
 .sb-status b { font-weight: 400; color: var(--text); }
 .sb-status--warn b, .sb-status--err b { color: inherit; }
+/* Sadece Warning ve Failed dolgulu rozet alır (design-system.md §3.4). */
+.sb-status--warn, .sb-status--err {
+  padding: 2px 7px; border-radius: var(--radius-sm);
+  font-weight: 500; height: 20px;
+}
+.sb-status--warn { background: var(--warning-bg); }
+.sb-status--err  { background: var(--danger-bg); }
 
 /* --- Uygulama kabuğu --- */
 .sb-app {
@@ -72,3 +80,106 @@
 .sb-content { flex: 1; overflow-y: auto; padding: var(--space-5); }
 .sb-content--form { max-width: 640px; }
 .sb-row { display: flex; align-items: center; gap: var(--space-3); }
+.sb-stack { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* --- Buton --- */
+.sb-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text);
+  font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.sb-btn:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.sb-btn--sm { height: 28px; padding: 0 9px; font-size: 12.5px; }
+.sb-btn--primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.sb-btn--primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text-strong)); border-color: transparent; }
+.sb-btn--subtle { background: transparent; border-color: transparent; color: var(--text-secondary); }
+.sb-btn--subtle:hover { background: var(--surface-hover); color: var(--text); border-color: transparent; }
+.sb-btn--danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.sb-btn--danger-outline { background: transparent; border-color: var(--danger-border); color: var(--danger); }
+.sb-btn--danger-outline:hover { background: var(--danger-bg); border-color: var(--danger); }
+.sb-btn[disabled] { opacity: .5; cursor: not-allowed; }
+.sb-btn[disabled]:hover { background: var(--surface); border-color: var(--border); }
+
+/* --- Alan --- */
+.sb-field { display: flex; flex-direction: column; gap: 5px; }
+.sb-field > label { font-size: 12px; font-weight: 500; color: var(--text-secondary); letter-spacing: .01em; }
+.sb-input, .sb-select {
+  height: 32px; padding: 0 9px;
+  background: var(--canvas); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 13px; width: 100%;
+}
+.sb-input::placeholder { color: var(--text-muted); }
+.sb-input:focus-visible, .sb-select:focus-visible { border-color: var(--accent); }
+.sb-input--mono { font-family: var(--font-mono); }
+.sb-hint { font-size: 12px; color: var(--text-muted); }
+.sb-hint--error { color: var(--danger); }
+.w-xs { width: 80px; } .w-sm { width: 160px; } .w-md { width: 280px; }
+
+/* --- Kart --- */
+.sb-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.sb-card-head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+.sb-card-head h3 { font-size: 15px; font-weight: 600; margin: 0; color: var(--text-strong); }
+.sb-card-head .sp { flex: 1; }
+.sb-card-body { padding: var(--space-4); }
+.sb-card-body--flush { padding: 0; }
+
+/* --- Metrik --- */
+.sb-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
+.sb-metric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); display: flex; flex-direction: column; gap: 2px; }
+.sb-metric-label { font-size: 12px; font-weight: 500; color: var(--text-muted); letter-spacing: .01em; }
+.sb-metric-value { font-size: 28px; line-height: 34px; font-weight: 600; color: var(--text-strong); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.sb-metric-sub { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* --- Banner --- */
+.sb-banner { display: flex; gap: 10px; align-items: flex-start; padding: 10px var(--space-3); border: 1px solid; border-radius: var(--radius-md); font-size: 13px; }
+.sb-banner .ic { margin-top: 2px; }
+.sb-banner-t { font-weight: 600; }
+.sb-banner-b { color: var(--text-secondary); }
+.sb-banner .sp { flex: 1; }
+.sb-banner--ok   { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+.sb-banner--warn { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning); }
+.sb-banner--err  { background: var(--danger-bg);  border-color: var(--danger-border);  color: var(--danger); }
+.sb-banner--neutral { background: var(--surface); border-color: var(--border); color: var(--text-secondary); }
+.sb-banner--neutral .sb-banner-t { color: var(--text-strong); }
+
+/* --- İlerleme --- */
+.sb-prog { display: flex; flex-direction: column; gap: 6px; }
+.sb-prog-track { height: 4px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.sb-prog-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+.sb-prog-text { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* --- Log konsolu --- */
+.sb-log { background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 12.5px; line-height: 19px; max-height: 360px; overflow: auto; padding: 8px 10px; }
+.sb-log div { white-space: pre-wrap; }
+.sb-log time { color: var(--text-muted); }
+.sb-log .lv-err  { color: var(--danger); }
+.sb-log .lv-warn { color: var(--warning); }
+
+/* --- İskelet / boş --- */
+.sb-skel { height: 10px; border-radius: 3px; background: var(--surface-hover); }
+.sb-empty { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); padding: var(--space-6) var(--space-4); color: var(--text-muted); font-size: 13px; }
+
+/* --- Drawer --- */
+.sb-drawer { position: absolute; inset: 0 0 0 auto; width: 480px; background: var(--surface-raised); border-left: 1px solid var(--border-strong); box-shadow: var(--shadow-3); display: flex; flex-direction: column; z-index: 20; }
+.sb-drawer-head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+.sb-drawer-head h3 { font-size: 15px; font-weight: 600; margin: 0; color: var(--text-strong); }
+.sb-drawer-body { padding: var(--space-4); overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-4); }
+.sb-dl { display: grid; grid-template-columns: 132px 1fr; gap: 7px var(--space-3); font-size: 13px; }
+.sb-dl dt { color: var(--text-muted); }
+.sb-dl dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* --- Dialog --- */
+.sb-overlay { position: absolute; inset: 0; background: var(--overlay); z-index: 30; display: grid; place-items: center; padding: var(--space-5); }
+.sb-dialog { width: 640px; max-width: 100%; max-height: 100%; background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-md); box-shadow: var(--shadow-3); display: flex; flex-direction: column; }
+.sb-dialog--sm { width: 480px; }
+.sb-dialog-head { padding: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+.sb-dialog-head h3 { font-size: 16px; font-weight: 600; margin: 0; color: var(--text-strong); }
+.sb-dialog-head p { font-size: 13px; color: var(--text-muted); margin: 4px 0 0; }
+.sb-dialog-body { padding: var(--space-4); overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-5); }
+.sb-dialog-foot { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-subtle); display: flex; justify-content: flex-end; gap: var(--space-2); }
+.sb-fs { display: flex; flex-direction: column; gap: var(--space-3); }
+.sb-fs-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); letter-spacing: .02em; }

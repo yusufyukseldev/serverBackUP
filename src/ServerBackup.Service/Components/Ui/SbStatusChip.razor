@@ -1,0 +1,38 @@
+@if (Info.CssSuffix == "locked")
+{
+    <span class="sb-status sb-status--locked">
+        <SbIcon Name="lock" Small="true" />
+        <b>@ResolvedText</b>
+    </span>
+}
+else
+{
+    <span class="sb-status sb-status--@Info.CssSuffix">
+        <i></i>
+        <b>@ResolvedText</b>
+    </span>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public string Status { get; set; } = "";
+
+    [Parameter]
+    public string? Text { get; set; }
+
+    /// <summary>design-system.md §3.4 — the single source of truth for status → color/format across the panel.</summary>
+    private static readonly Dictionary<string, (string CssSuffix, string DefaultText)> Map = new()
+    {
+        ["Succeeded"] = ("ok", "Başarılı"),
+        ["Running"] = ("run", "Sürüyor"),
+        ["Pending"] = ("pending", "Bekliyor"),
+        ["Warning"] = ("warn", "Uyarı"),
+        ["Failed"] = ("err", "Hata"),
+        ["Cancelled"] = ("muted", "İptal edildi"),
+        ["Locked"] = ("locked", "Korumalı"),
+    };
+
+    private (string CssSuffix, string DefaultText) Info => Map.TryGetValue(Status, out var value) ? value : ("muted", Status);
+
+    private string ResolvedText => Text ?? Info.DefaultText;
+}
