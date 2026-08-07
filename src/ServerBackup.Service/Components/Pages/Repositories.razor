@@ -2,131 +2,360 @@
 @using System.Security.Cryptography
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Options
+@using ServerBackup.Core.Repository
 @using ServerBackup.Data
+@using ServerBackup.Data.Entities
 @using ServerBackup.Engine.Backup
+@using ServerBackup.Engine.Prune
 @using ServerBackup.Engine.Repository
+@using ServerBackup.Engine.Retention
 @using ServerBackup.Engine.Scanning
+@using ServerBackup.Engine.Verify
+@using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
+@using ServerBackup.Service.Storage
 @inject IOptions<ServerBackupOptions> Options
 
-<div class="sb-content">
-<h1>Depolar</h1>
+<PageHeader Title="Depolar" />
 
+<div class="sb-content">
 @if (_rows is null)
 {
-    <p>Yükleniyor...</p>
+    <SbSkeleton />
+}
+else if (_rows.Count == 0)
+{
+    <SbEmptyState Message="Yapılandırılmış depo yok. appsettings.json içindeki ServerBackup:Repositories listesine bir depo yolu ekleyin." />
 }
 else
 {
-    <table>
+    <div class="sb-table-wrap"><table class="sb-table">
         <thead>
             <tr>
+                <th>Ad</th>
                 <th>Yol</th>
                 <th>Durum</th>
-                <th>Parolasız Erişim</th>
-                <th>Pack</th>
-                <th>Blob</th>
-                <th>Snapshot</th>
-                <th></th>
+                <th>Erişim</th>
+                <th class="r">Snapshot</th>
+                <th class="r">Boyut</th>
+                <th>Disk</th>
+                <th>Son doğrulama</th>
             </tr>
         </thead>
         <tbody>
             @foreach (var row in _rows)
             {
-                <tr>
-                    <td>@row.RepoPath</td>
+                <tr class="@(row.Exists ? "is-clickable" : "")" @onclick="() => OpenDrawerAsync(row)">
+                    <td class="sb-name">@row.DisplayName</td>
+                    <td class="path" title="@row.RepoPath">@Fmt.TruncatePath(row.RepoPath, 30)</td>
                     <td>
                         @if (row.Exists)
                         {
-                            <span class="badge badge-ok">Hazır</span>
+                            <SbStatusChip Status="Succeeded" Text="Hazır" />
                         }
                         else
                         {
-                            <span class="badge badge-err">catalog.db yok</span>
+                            <SbStatusChip Status="Failed" Text="catalog.db yok" />
                         }
                     </td>
                     <td>
-                        @if (row.UnattendedEnabled)
+                        <span class="sb-row">
+                            <SbIcon Name="@(row.UnattendedEnabled ? "unlock" : "lock")" Small="true" />
+                            @(row.UnattendedEnabled ? "Açık" : "Kapalı")
+                        </span>
+                    </td>
+                    <td class="r num">@row.SnapshotCount</td>
+                    <td class="r num">@Fmt.Bytes(row.TotalBytes)</td>
+                    <td>
+                        @if (row.DiskPercent is { } p)
                         {
-                            <span class="badge badge-ok">Açık</span>
+                            <SbDiskBar Percent="p" />
                         }
                         else
                         {
-                            <span class="badge badge-muted">Kapalı</span>
+                            <span class="sb-hint">—</span>
                         }
                     </td>
-                    <td>@row.PackCount</td>
-                    <td>@row.BlobCount</td>
-                    <td>@row.SnapshotCount</td>
-                    <td>
-                        @if (row.Exists)
-                        {
-                            <SbButton OnClick="() => ToggleBackupForm(row.RepoPath)">Yedek Al</SbButton>
-                        }
-                    </td>
+                    <td class="sb-hint">—</td>
                 </tr>
-                @if (_backupFormRepo == row.RepoPath)
-                {
-                    <tr>
-                        <td colspan="7">
-                            <div class="sb-stack">
-                                <SbField Label="Kaynak Yollar (virgülle ayrılmış)">
-                                    <input class="sb-input" @bind="_backupSourcePaths" placeholder="C:\Veri, D:\Projeler" />
-                                </SbField>
-
-                                @if (!row.UnattendedEnabled)
-                                {
-                                    <SbField Label="Parola">
-                                        <input class="sb-input" type="password" @bind="_backupPassword" />
-                                    </SbField>
-                                }
-
-                                <SbButton
-                                    OnClick="() => RunBackupNowAsync(row.RepoPath, row.UnattendedEnabled)"
-                                    Disabled="@_backupRunning"
-                                    DisabledReason="@(_backupRunning ? "Yedekleme zaten sürüyor" : null)">
-                                    @(_backupRunning ? "Yedekleniyor..." : "Şimdi Başlat")
-                                </SbButton>
-
-                                @if (_backupMessage is not null)
-                                {
-                                    <p>@_backupMessage</p>
-                                }
-                            </div>
-                        </td>
-                    </tr>
-                }
             }
         </tbody>
-    </table>
+    </table></div>
 }
 </div>
 
+<SbDrawer Title="@(_selectedRow?.DisplayName ?? "")" Open="@(_selectedRow is not null)" OnClose="CloseDrawer">
+    @if (_selectedRow is not null)
+    {
+        <div class="sb-fs">
+            <div class="sb-fs-title">ÖZET</div>
+            <dl class="sb-dl">
+                <dt>Yol</dt><dd class="mono">@_selectedRow.RepoPath</dd>
+                <dt>Format sürümü</dt><dd>@(_drawerConfig?.FormatVersion.ToString() ?? "—")</dd>
+                <dt>Oluşturma tarihi</dt><dd>@(_drawerConfig is null ? "—" : Fmt.DateTime(_drawerConfig.CreatedAtUtc))</dd>
+                <dt>Parola → anahtar</dt><dd class="mono">Argon2id — m=64 MiB, t=3, p=4</dd>
+                <dt>Veri şifreleme</dt><dd class="mono">AES-256-GCM</dd>
+                <dt>Alt anahtarlar</dt><dd class="mono">HKDF-SHA256</dd>
+            </dl>
+        </div>
+
+        <div class="sb-fs">
+            <div class="sb-fs-title">KULLANIM</div>
+            <dl class="sb-dl">
+                <dt>Pack</dt><dd>@Fmt.Number(_selectedRow.PackCount)</dd>
+                <dt>Blob</dt><dd>@Fmt.Number(_selectedRow.BlobCount)</dd>
+                <dt>Dedup oranı</dt><dd>— (dedup öncesi boyut izlenmiyor)</dd>
+                <dt>Disk doluluk</dt><dd>@(_selectedRow.DiskPercent is { } dp ? $"%{dp}" : "—")</dd>
+            </dl>
+        </div>
+
+        <div class="sb-fs">
+            <div class="sb-fs-title">GÜVENLİK</div>
+            <dl class="sb-dl">
+                <dt>Gözetimsiz erişim</dt><dd>@(_selectedRow.UnattendedEnabled ? "Açık (DPAPI)" : "Kapalı — parola gerekli")</dd>
+                <dt>Append-only</dt><dd>@(_drawerConfig?.AppendOnly is true ? "Açık" : "Kapalı")</dd>
+                <dt>Değişmezlik penceresi</dt><dd>@(_drawerConfig?.ImmutabilityWindowDays is { } d ? $"{d} gün" : "Yok")</dd>
+                <dt>ACL durumu</dt><dd>—</dd>
+            </dl>
+        </div>
+
+        <div class="sb-fs">
+            <div class="sb-fs-title">DOĞRULAMA GEÇMİŞİ</div>
+            <p class="sb-hint">Doğrulama geçmişi şu an tutulmuyor.</p>
+        </div>
+
+        <div class="sb-fs">
+            <div class="sb-fs-title">EYLEMLER</div>
+            <div class="sb-row">
+                <SbButton Variant="SbButtonVariant.Primary" OnClick="OpenBackupDialog">Yedek al</SbButton>
+                <SbButton OnClick="OpenVerifyDialog">Doğrula</SbButton>
+                <SbButton
+                    Variant="SbButtonVariant.DangerOutline"
+                    OnClick="OpenPruneDialog"
+                    Disabled="@(!CanPrune)"
+                    DisabledReason="@PruneDisabledReason">
+                    Buda
+                </SbButton>
+            </div>
+        </div>
+    }
+</SbDrawer>
+
+<SbDialog Title="Yedek al" Description="@(_selectedRow?.RepoPath)" Open="_backupDialogOpen" OnClose="CloseBackupDialog" Size="SbDialogSize.Md">
+    <ChildContent>
+        <div class="sb-stack">
+            <SbField Label="Kaynak Yollar (virgülle ayrılmış)">
+                <input class="sb-input" @bind="_backupSourcePaths" placeholder="C:\Veri, D:\Projeler" />
+            </SbField>
+
+            @if (_selectedRow is not null && !_selectedRow.UnattendedEnabled)
+            {
+                <SbField Label="Parola">
+                    <input class="sb-input" type="password" @bind="_backupPassword" />
+                </SbField>
+            }
+
+            @if (_backupMessage is not null)
+            {
+                <p>@_backupMessage</p>
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="CloseBackupDialog">Vazgeç</SbButton>
+        <SbButton
+            Variant="SbButtonVariant.Primary"
+            OnClick="RunBackupNowAsync"
+            Disabled="@_backupRunning"
+            DisabledReason="@(_backupRunning ? "Yedekleme zaten sürüyor" : null)">
+            @(_backupRunning ? "Yedekleniyor..." : "Başlat")
+        </SbButton>
+    </Footer>
+</SbDialog>
+
+<SbDialog Title="Depoyu doğrula" Description="@(_selectedRow?.RepoPath)" Open="_verifyDialogOpen" OnClose="CloseVerifyDialog" Size="SbDialogSize.Md">
+    <ChildContent>
+        <div class="sb-stack">
+            <SbField Label="Doğrulama seviyesi">
+                <select class="sb-select" @bind="_verifyLevel">
+                    <option value="Index">Hızlı — katalog tutarlılığı</option>
+                    <option value="Packs">Pack bütünlüğü — SHA-256</option>
+                    <option value="Full">Tam — her blob'u çöz ve doğrula</option>
+                </select>
+            </SbField>
+
+            @if (_selectedRow is not null && !_selectedRow.UnattendedEnabled)
+            {
+                <SbField Label="Parola">
+                    <input class="sb-input" type="password" @bind="_verifyPassword" />
+                </SbField>
+            }
+
+            @if (_verifyIssues is not null)
+            {
+                @if (_verifyIssues.Count == 0)
+                {
+                    <SbBanner Tone="SbBannerTone.Ok" Icon="check" Title="Sorun bulunamadı" />
+                }
+                else
+                {
+                    <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="@($"{_verifyIssues.Count} sorun bulundu")" />
+                    <div class="sb-log">
+                        @foreach (var issue in _verifyIssues)
+                        {
+                            <div>[@issue.Category] @issue.Description</div>
+                        }
+                    </div>
+                }
+            }
+            else if (_verifyMessage is not null)
+            {
+                <p>@_verifyMessage</p>
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="CloseVerifyDialog">Vazgeç</SbButton>
+        <SbButton
+            OnClick="RunVerifyAsync"
+            Disabled="@_verifyRunning"
+            DisabledReason="@(_verifyRunning ? "Doğrulama zaten sürüyor" : null)">
+            @(_verifyRunning ? "Doğrulanıyor..." : "Doğrulamayı başlat")
+        </SbButton>
+    </Footer>
+</SbDialog>
+
+@if (_pruneDialogOpen && _selectedRow is not null)
+{
+    <SbConfirmDialog
+        Title="@($"{_selectedRow.DisplayName} budanacak")"
+        Consequence="Bu depodaki saklama politikası dışında kalan snapshot'lar ve artık kullanılmayan pack'ler kalıcı olarak silinir. Bu işlem geri alınamaz."
+        ConfirmWord="@_selectedRow.DisplayName"
+        ConfirmLabel="@(_pruneRunning ? "Budanıyor..." : "Budayı çalıştır")"
+        OnConfirm="RunPruneAsync"
+        OnCancel="ClosePruneDialog" />
+}
+@if (_pruneMessage is not null)
+{
+    <div class="sb-overlay">
+        <div class="sb-dialog sb-dialog--sm">
+            <div class="sb-dialog-head"><h3>Buda sonucu</h3></div>
+            <div class="sb-dialog-body"><p>@_pruneMessage</p></div>
+            <div class="sb-dialog-foot"><SbButton Variant="SbButtonVariant.Primary" OnClick="@(() => _pruneMessage = null)">Kapat</SbButton></div>
+        </div>
+    </div>
+}
+
 @code {
-    private sealed record RepoRow(string RepoPath, bool Exists, bool UnattendedEnabled, int PackCount, int BlobCount, int SnapshotCount);
+    private sealed record RepoRow(
+        string RepoPath, string DisplayName, bool Exists, bool UnattendedEnabled,
+        int PackCount, int BlobCount, int SnapshotCount, long TotalBytes, int? DiskPercent);
 
     private List<RepoRow>? _rows;
-    private string? _backupFormRepo;
+    private RepoRow? _selectedRow;
+    private RepositoryConfig? _drawerConfig;
+    private int _drawerPlanCount;
+    private PlanEntity? _drawerSinglePlan;
+
+    private bool _backupDialogOpen;
     private string _backupSourcePaths = "";
     private string _backupPassword = "";
     private bool _backupRunning;
     private string? _backupMessage;
 
-    private void ToggleBackupForm(string repoPath)
+    private bool _verifyDialogOpen;
+    private string _verifyLevel = nameof(VerifyLevel.Index);
+    private string _verifyPassword = "";
+    private bool _verifyRunning;
+    private IReadOnlyList<VerifyIssue>? _verifyIssues;
+    private string? _verifyMessage;
+
+    private bool _pruneDialogOpen;
+    private bool _pruneRunning;
+    private string? _pruneMessage;
+
+    private bool CanPrune => _drawerPlanCount == 1;
+
+    private string? PruneDisabledReason => _drawerPlanCount switch
     {
-        _backupFormRepo = _backupFormRepo == repoPath ? null : repoPath;
+        0 => "Bu depoya bağlı bir plan yok, saklama politikası belirlenemiyor",
+        1 => null,
+        _ => "Birden fazla plan var — hangi saklama politikasının kullanılacağı belirsiz",
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var rows = new List<RepoRow>();
+
+        foreach (var repoPath in Options.Value.Repositories)
+        {
+            var dbPath = Path.Combine(repoPath, "catalog.db");
+            var unattended = UnattendedKeyStore.IsEnabled(repoPath);
+            var displayName = RepoNaming.DisplayName(repoPath);
+            var diskPercent = DiskUsage.GetUsedPercent(repoPath);
+
+            if (!File.Exists(dbPath))
+            {
+                rows.Add(new RepoRow(repoPath, displayName, false, unattended, 0, 0, 0, 0, diskPercent));
+                continue;
+            }
+
+            await using var db = CatalogDbContextFactory.Create(dbPath);
+            rows.Add(new RepoRow(
+                repoPath,
+                displayName,
+                true,
+                unattended,
+                await db.Packs.CountAsync(),
+                await db.Blobs.CountAsync(),
+                await db.Snapshots.CountAsync(),
+                await db.Packs.SumAsync(p => (long?)p.SizeBytes) ?? 0,
+                diskPercent));
+        }
+
+        _rows = rows;
+    }
+
+    private async Task OpenDrawerAsync(RepoRow row)
+    {
+        if (!row.Exists)
+        {
+            return;
+        }
+
+        _selectedRow = row;
+        _drawerConfig = await RepositoryManager.ReadConfigAsync(row.RepoPath);
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(row.RepoPath, "catalog.db"));
+        var plans = await db.Plans.AsNoTracking().ToListAsync();
+        _drawerPlanCount = plans.Count;
+        _drawerSinglePlan = plans.Count == 1 ? plans[0] : null;
+    }
+
+    private void CloseDrawer()
+    {
+        _selectedRow = null;
+        _drawerConfig = null;
+        _drawerSinglePlan = null;
+    }
+
+    private void OpenBackupDialog()
+    {
         _backupSourcePaths = "";
         _backupPassword = "";
         _backupMessage = null;
+        _backupDialogOpen = true;
     }
 
-    /// <summary>
-    /// Ad-hoc "yedek al" click from the panel — no saved Plan required. Chains
-    /// to the repo's most recent snapshot (regardless of which plan made it)
-    /// so this run is still incremental, matching what a scheduled plan run
-    /// would do (see BackupSchedulerService).
-    private async Task RunBackupNowAsync(string repoPath, bool unattended)
+    private void CloseBackupDialog() => _backupDialogOpen = false;
+
+    private async Task RunBackupNowAsync()
     {
+        if (_selectedRow is null)
+        {
+            return;
+        }
+
         _backupMessage = null;
 
         var sourcePaths = _backupSourcePaths.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -135,6 +364,9 @@ else
             _backupMessage = "En az bir kaynak yol girin.";
             return;
         }
+
+        var repoPath = _selectedRow.RepoPath;
+        var unattended = _selectedRow.UnattendedEnabled;
 
         byte[] masterKey;
         try
@@ -162,7 +394,7 @@ else
             var snapshotId = await engine.RunAsync(sourcePaths, parentSnapshotId);
 
             _backupMessage = $"Tamamlandı — snapshot {snapshotId}.";
-            _backupFormRepo = null;
+            _backupDialogOpen = false;
             await OnInitializedAsync();
         }
         catch (Exception ex)
@@ -176,31 +408,111 @@ else
         }
     }
 
-    protected override async Task OnInitializedAsync()
+    private void OpenVerifyDialog()
     {
-        var rows = new List<RepoRow>();
+        _verifyLevel = nameof(VerifyLevel.Index);
+        _verifyPassword = "";
+        _verifyIssues = null;
+        _verifyMessage = null;
+        _verifyDialogOpen = true;
+    }
 
-        foreach (var repoPath in Options.Value.Repositories)
+    private void CloseVerifyDialog() => _verifyDialogOpen = false;
+
+    private async Task RunVerifyAsync()
+    {
+        if (_selectedRow is null)
         {
-            var dbPath = Path.Combine(repoPath, "catalog.db");
-            var unattended = UnattendedKeyStore.IsEnabled(repoPath);
-
-            if (!File.Exists(dbPath))
-            {
-                rows.Add(new RepoRow(repoPath, false, unattended, 0, 0, 0));
-                continue;
-            }
-
-            await using var db = CatalogDbContextFactory.Create(dbPath);
-            rows.Add(new RepoRow(
-                repoPath,
-                true,
-                unattended,
-                await db.Packs.CountAsync(),
-                await db.Blobs.CountAsync(),
-                await db.Snapshots.CountAsync()));
+            return;
         }
 
-        _rows = rows;
+        _verifyMessage = null;
+        _verifyIssues = null;
+
+        var repoPath = _selectedRow.RepoPath;
+        byte[] masterKey;
+        try
+        {
+            masterKey = _selectedRow.UnattendedEnabled
+                ? UnattendedKeyStore.Unlock(repoPath)
+                : await RepositoryKeyStore.UnlockAsync(repoPath, _verifyPassword);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _verifyMessage = "Parola yanlış.";
+            return;
+        }
+
+        _verifyRunning = true;
+        try
+        {
+            var level = Enum.Parse<VerifyLevel>(_verifyLevel);
+            var engine = new VerifyEngine(repoPath, masterKey);
+            _verifyIssues = await engine.RunAsync(level);
+        }
+        catch (Exception ex)
+        {
+            _verifyMessage = $"Doğrulama başarısız: {ex.Message}";
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(masterKey);
+            _verifyRunning = false;
+        }
+    }
+
+    private void OpenPruneDialog()
+    {
+        _pruneMessage = null;
+        _pruneDialogOpen = true;
+    }
+
+    private void ClosePruneDialog() => _pruneDialogOpen = false;
+
+    private async Task RunPruneAsync()
+    {
+        if (_selectedRow is null || _drawerSinglePlan is null)
+        {
+            return;
+        }
+
+        var repoPath = _selectedRow.RepoPath;
+        byte[] masterKey;
+        try
+        {
+            masterKey = _selectedRow.UnattendedEnabled
+                ? UnattendedKeyStore.Unlock(repoPath)
+                : throw new UnauthorizedAccessException("Bu depo gözetimsiz erişime açık değil — buda için önce Ayarlar'dan açık erişimi etkinleştirin.");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _pruneMessage = ex.Message;
+            _pruneDialogOpen = false;
+            return;
+        }
+
+        _pruneRunning = true;
+        try
+        {
+            var policy = _drawerSinglePlan.RetentionPolicyJson is null
+                ? new RetentionPolicy()
+                : System.Text.Json.JsonSerializer.Deserialize<RetentionPolicy>(_drawerSinglePlan.RetentionPolicyJson) ?? new RetentionPolicy();
+
+            var engine = new PruneEngine(repoPath, masterKey);
+            var result = await engine.RunAsync(policy, dryRun: false);
+
+            _pruneMessage = $"{result.SnapshotsToDelete.Count} snapshot silindi, {Fmt.Bytes(result.BytesFreed)} boşaltıldı.";
+            _pruneDialogOpen = false;
+            await OnInitializedAsync();
+        }
+        catch (Exception ex)
+        {
+            _pruneMessage = $"Buda başarısız: {ex.Message}";
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(masterKey);
+            _pruneRunning = false;
+        }
     }
 }
