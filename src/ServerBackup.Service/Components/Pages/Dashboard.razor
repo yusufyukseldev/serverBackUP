@@ -2,50 +2,158 @@
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Options
 @using ServerBackup.Data
+@using ServerBackup.Data.Entities
+@using ServerBackup.Engine.Reporting
+@using ServerBackup.Engine.Scheduling
 @using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
+@using ServerBackup.Service.Storage
 @inject IOptions<ServerBackupOptions> Options
+@inject NavigationManager Nav
+
+<PageHeader Title="Genel Bakış" />
 
 <div class="sb-content">
-<h1>Dashboard</h1>
-
-@if (_summaries is null)
+@if (_repos is null)
 {
-    <p>Yükleniyor...</p>
+    <SbSkeleton />
 }
-else if (_summaries.Count == 0)
+else if (_repos.Count == 0)
 {
-    <p>Yapılandırılmış depo yok. <code>appsettings.json</code> içindeki <code>ServerBackup:Repositories</code> listesine bir depo yolu ekleyin.</p>
+    <SbEmptyState Message="Yapılandırılmış depo yok. appsettings.json içindeki ServerBackup:Repositories listesine bir depo yolu ekleyin." />
 }
 else
 {
-    <div class="cards">
-        @foreach (var s in _summaries)
-        {
-            <div class="card">
-                <div class="metric-label">@s.RepoPath</div>
-                <div class="metric-value">@s.SnapshotCount</div>
-                <div class="metric-label">snapshot · @s.PackCount pack · @Fmt.Bytes(s.TotalBytes)</div>
-                @if (s.LastJobStatus is not null)
-                {
-                    <div class="sb-row">
-                        Son iş: <SbStatusChip Status="@s.LastJobStatus" />
-                    </div>
-                }
+    <div class="sb-stack">
+        <SbBanner Tone="@_bandTone" Icon="shield" Title="@_bandTitle" Body="@_bandBody" Action="@_bandAction" />
+
+        <div class="sb-metrics">
+            <SbMetric Label="Diskte kapladığı" Value="@Fmt.Bytes(_totalPackBytes)" Sub="@($"{_repos.Count} depo · {_totalSnapshots} snapshot")" />
+            <SbMetric Label="Korunan veri" Value="—" Sub="dedup öncesi boyut henüz izlenmiyor" />
+            <SbMetric Label="Son 24 saat" Value="@($"{_last24hSucceeded} / {_last24hFailed}")" Sub="başarılı / başarısız" />
+            <SbMetric Label="En eski snapshot" Value="@_oldestSnapshotAge" Sub="@_oldestSnapshotDate" />
+        </div>
+
+        <div class="sb-2col">
+            <SbCard Title="Son işler" Flush="true">
+                <HeaderActions>
+                    <SbButton Variant="SbButtonVariant.Subtle" Size="SbButtonSize.Sm" OnClick="GoToJobs">Tümü</SbButton>
+                </HeaderActions>
+                <ChildContent>
+                    @if (_recentJobs.Count == 0)
+                    {
+                        <SbEmptyState Message="Henüz iş kaydı yok." />
+                    }
+                    else
+                    {
+                        <div class="sb-table-wrap"><table class="sb-table">
+                            <tbody>
+                                @foreach (var j in _recentJobs)
+                                {
+                                    <tr>
+                                        <td><SbStatusChip Status="@j.Status" /></td>
+                                        <td class="sb-name">@j.RepoDisplayName</td>
+                                        <td class="r num">@(j.StartedAtUtc is { } s ? Fmt.DateTime(s) : "-")</td>
+                                        <td class="r num">@j.DurationText</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table></div>
+                    }
+                </ChildContent>
+            </SbCard>
+
+            <SbCard Title="Depolar" Flush="true">
+                <div class="sb-table-wrap"><table class="sb-table">
+                    <tbody>
+                        @foreach (var r in _repos)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="sb-name">@r.DisplayName</div>
+                                    <div class="path" title="@r.RepoPath">@Fmt.TruncatePath(r.RepoPath, 30)</div>
+                                </td>
+                                <td>
+                                    @if (r.DiskPercent is { } p)
+                                    {
+                                        <SbDiskBar Percent="p" />
+                                    }
+                                    else
+                                    {
+                                        <span class="sb-hint">—</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table></div>
+            </SbCard>
+        </div>
+
+        <div class="sb-card">
+            <div class="sb-card-head"><h3>Son 90 gün</h3></div>
+            <div class="sb-card-body">
+                <div class="sb-hstrip">
+                    @foreach (var r in _repos)
+                    {
+                        <div class="sb-hrow">
+                            <span>@r.DisplayName</span>
+                            <div class="sb-hcells">
+                                @foreach (var day in r.Last90Days)
+                                {
+                                    <i class="@DayClass(day)"></i>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="sb-hlegend">
+                    <span><b class="ok"></b> Başarılı</span>
+                    <span><b class="err"></b> Başarısız</span>
+                    <span><b class="none"></b> Yedek alınmadı</span>
+                </div>
             </div>
-        }
+        </div>
     </div>
 }
 </div>
 
 @code {
-    private sealed record RepoSummary(string RepoPath, int SnapshotCount, int PackCount, long TotalBytes, string? LastJobStatus);
+    private enum BandState { Ok, Warn, Err }
 
-    private List<RepoSummary>? _summaries;
+    private sealed record RepoOverview(
+        string RepoPath,
+        string DisplayName,
+        int SnapshotCount,
+        long TotalBytes,
+        int? DiskPercent,
+        BandState State,
+        IReadOnlyList<DayHealth> Last90Days);
+
+    private sealed record JobRow(string RepoDisplayName, string Status, DateTimeOffset? StartedAtUtc, string DurationText);
+
+    private List<RepoOverview>? _repos;
+    private List<JobRow> _recentJobs = [];
+    private long _totalPackBytes;
+    private int _totalSnapshots;
+    private int _last24hSucceeded;
+    private int _last24hFailed;
+    private string _oldestSnapshotAge = "—";
+    private string? _oldestSnapshotDate;
+    private SbBannerTone _bandTone = SbBannerTone.Ok;
+    private string _bandTitle = "";
+    private string _bandBody = "";
+    private RenderFragment? _bandAction;
 
     protected override async Task OnInitializedAsync()
     {
-        var summaries = new List<RepoSummary>();
+        var repos = new List<RepoOverview>();
+        var allJobs = new List<(string RepoDisplayName, JobEntity Job)>();
+        DateTimeOffset? oldestSnapshot = null;
+        DateTimeOffset? lastSuccessAcrossAll = null;
+        var totalPackBytes = 0L;
+        var totalSnapshots = 0;
+        var now = DateTimeOffset.UtcNow;
 
         foreach (var repoPath in Options.Value.Repositories)
         {
@@ -55,18 +163,96 @@ else
                 continue;
             }
 
+            var displayName = RepoNaming.DisplayName(repoPath);
+
             await using var db = CatalogDbContextFactory.Create(dbPath);
             var snapshotCount = await db.Snapshots.CountAsync();
-            var packCount = await db.Packs.CountAsync();
-            var totalBytes = await db.Packs.SumAsync(p => (long?)p.SizeBytes) ?? 0;
+            var packBytes = await db.Packs.SumAsync(p => (long?)p.SizeBytes) ?? 0;
+            var jobs = await db.Jobs.AsNoTracking().ToListAsync();
+            var plans = await db.Plans.AsNoTracking().ToListAsync();
+            var oldestInRepo = (await db.Snapshots.AsNoTracking().Select(s => s.StartedAtUtc).ToListAsync())
+                .Cast<DateTimeOffset?>()
+                .MinBy(s => s);
 
-            var lastJob = (await db.Jobs.AsNoTracking().ToListAsync())
-                .OrderByDescending(j => j.StartedAtUtc)
-                .FirstOrDefault();
+            totalPackBytes += packBytes;
+            totalSnapshots += snapshotCount;
+            if (oldestInRepo is { } o && (oldestSnapshot is null || o < oldestSnapshot))
+            {
+                oldestSnapshot = o;
+            }
 
-            summaries.Add(new RepoSummary(repoPath, snapshotCount, packCount, totalBytes, lastJob?.Status));
+            var lastJob = jobs.OrderByDescending(j => j.StartedAtUtc).FirstOrDefault();
+            var lastSuccess = jobs.Where(j => j.Status == "Succeeded").OrderByDescending(j => j.StartedAtUtc).FirstOrDefault();
+            if (lastSuccess?.StartedAtUtc is { } ls && (lastSuccessAcrossAll is null || ls > lastSuccessAcrossAll))
+            {
+                lastSuccessAcrossAll = ls;
+            }
+
+            var hasFailure = lastJob?.Status == "Failed";
+            var isOverdue = plans.Any(p => p.CronSchedule is not null
+                && CronScheduleCalculator.IsDue(p.CronSchedule, lastSuccess?.StartedAtUtc, now));
+            var state = hasFailure ? BandState.Err : isOverdue ? BandState.Warn : BandState.Ok;
+
+            var healthInputs = jobs.Where(j => j.StartedAtUtc is not null)
+                .Select(j => (j.StartedAtUtc!.Value, j.Status))
+                .ToList();
+            var last90 = BackupHealthCalendar.LastNDays(healthInputs, now, 90);
+
+            repos.Add(new RepoOverview(repoPath, displayName, snapshotCount, packBytes, DiskUsage.GetUsedPercent(repoPath), state, last90));
+
+            foreach (var job in jobs)
+            {
+                allJobs.Add((displayName, job));
+            }
         }
 
-        _summaries = summaries;
+        _repos = repos;
+        _totalPackBytes = totalPackBytes;
+        _totalSnapshots = totalSnapshots;
+
+        _recentJobs = allJobs
+            .OrderByDescending(j => j.Job.StartedAtUtc)
+            .Take(8)
+            .Select(j => new JobRow(j.RepoDisplayName, j.Job.Status, j.Job.StartedAtUtc, DurationText(j.Job)))
+            .ToList();
+
+        var last24h = now.AddHours(-24);
+        _last24hSucceeded = allJobs.Count(j => j.Job.StartedAtUtc >= last24h && j.Job.Status == "Succeeded");
+        _last24hFailed = allJobs.Count(j => j.Job.StartedAtUtc >= last24h && j.Job.Status == "Failed");
+
+        if (oldestSnapshot is { } oldest)
+        {
+            _oldestSnapshotAge = $"{(int)(now - oldest).TotalDays} gün";
+            _oldestSnapshotDate = Fmt.DateTime(oldest);
+        }
+
+        var errCount = repos.Count(r => r.State == BandState.Err);
+        var protectedCount = repos.Count - errCount;
+
+        _bandTone = errCount > 0 ? SbBannerTone.Err : repos.Any(r => r.State == BandState.Warn) ? SbBannerTone.Warn : SbBannerTone.Ok;
+        _bandTitle = $"{repos.Count} deponun {protectedCount}'si korunuyor";
+        _bandBody = lastSuccessAcrossAll is { } last
+            ? $"En son yedek {Fmt.Relative(last)} tamamlandı."
+            : "Henüz başarılı bir yedekleme yok.";
+
+        _bandAction = _bandTone == SbBannerTone.Err
+            ? @<SbButton Variant="SbButtonVariant.DangerOutline" Size="SbButtonSize.Sm" OnClick="GoToAlerts">Uyarılara git</SbButton>
+            : null;
     }
+
+    private static string DurationText(JobEntity job) =>
+        job.StartedAtUtc is null || job.FinishedAtUtc is null
+            ? "-"
+            : Fmt.Duration(job.FinishedAtUtc.Value - job.StartedAtUtc.Value);
+
+    private static string DayClass(DayHealth health) => health switch
+    {
+        DayHealth.None => "none",
+        DayHealth.Err => "err",
+        _ => "",
+    };
+
+    private void GoToJobs() => Nav.NavigateTo("/jobs");
+
+    private void GoToAlerts() => Nav.NavigateTo("/alerts");
 }

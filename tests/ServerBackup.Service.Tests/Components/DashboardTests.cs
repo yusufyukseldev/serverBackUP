@@ -1,7 +1,10 @@
 using Bunit;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using ServerBackup.Data;
+using ServerBackup.Data.Entities;
 using ServerBackup.Engine.Backup;
 using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Scanning;
@@ -44,7 +47,32 @@ public sealed class DashboardTests : BunitContext, IDisposable
         var cut = Render<Dashboard>();
         cut.WaitForAssertion(() => cut.Markup.Should().Contain(_repoPath), TimeSpan.FromSeconds(5));
 
-        cut.Markup.Should().Contain(">1<", "exactly one snapshot exists in this repository");
+        cut.Markup.Should().Contain("1 snapshot", "exactly one snapshot exists in this repository");
+    }
+
+    [Fact]
+    public async Task Shows_the_danger_band_and_an_action_when_a_repo_has_a_failed_job()
+    {
+        await RepositoryManager.InitializeAsync(_repoPath, Password);
+
+        await using (var db = CatalogDbContextFactory.Create(Path.Combine(_repoPath, "catalog.db")))
+        {
+            db.Jobs.Add(new JobEntity
+            {
+                JobId = "failed-1",
+                Kind = "backup",
+                Status = "Failed",
+                StartedAtUtc = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        Services.AddSingleton(Options.Create(new ServerBackupOptions { Repositories = [_repoPath] }));
+
+        var cut = Render<Dashboard>();
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("sb-banner--err"), TimeSpan.FromSeconds(5));
+
+        cut.Markup.Should().Contain("Uyarılara git");
     }
 
     public new void Dispose()

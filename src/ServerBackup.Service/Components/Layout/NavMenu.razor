@@ -3,6 +3,7 @@
 @using Microsoft.Extensions.Options
 @using ServerBackup.Data
 @using ServerBackup.Service.Scheduling
+@using ServerBackup.Service.Storage
 @implements IDisposable
 @inject IOptions<ServerBackupOptions> Options
 
@@ -35,7 +36,7 @@
     <div class="sb-repo" title="@repo.RepoPath">
         <span class="sb-status sb-status--@repo.StatusClass"><i></i></span>
         <span class="sb-repo-n">@repo.DisplayName</span>
-        <span class="sb-repo-d @(repo.DiskPercent is >= 85 ? "is-warn" : "")">@(repo.DiskPercent is { } p ? $"%{p}" : "—")</span>
+        <span class="sb-repo-d @(repo.DiskPercent is { } dp && (DiskUsage.IsWarning(dp) || DiskUsage.IsDanger(dp)) ? "is-warn" : "")">@(repo.DiskPercent is { } p ? $"%{p}" : "—")</span>
     </div>
 }
 
@@ -85,7 +86,7 @@
             var dbPath = Path.Combine(repoPath, "catalog.db");
             if (!File.Exists(dbPath))
             {
-                repos.Add(new RepoNavInfo(DisplayName(repoPath), repoPath, "muted", DiskPercent(repoPath)));
+                repos.Add(new RepoNavInfo(RepoNaming.DisplayName(repoPath), repoPath, "muted", DiskUsage.GetUsedPercent(repoPath)));
                 continue;
             }
 
@@ -96,20 +97,13 @@
             activeCount += jobs.Count(j => j.Status is "Running" or "Pending");
             failedCount += jobs.Count(j => j.Status == "Failed");
 
-            repos.Add(new RepoNavInfo(DisplayName(repoPath), repoPath, StatusClass(lastJob?.Status), DiskPercent(repoPath)));
+            repos.Add(new RepoNavInfo(RepoNaming.DisplayName(repoPath), repoPath, StatusClass(lastJob?.Status), DiskUsage.GetUsedPercent(repoPath)));
         }
 
         _repos = repos;
         _activeJobCount = activeCount;
         _failedJobCount = failedCount;
         StateHasChanged();
-    }
-
-    private static string DisplayName(string repoPath)
-    {
-        var trimmed = repoPath.TrimEnd('\\', '/');
-        var name = Path.GetFileName(trimmed);
-        return string.IsNullOrEmpty(name) ? trimmed : name;
     }
 
     private static string StatusClass(string? status) => status switch
@@ -120,32 +114,6 @@
         "Failed" => "err",
         _ => "muted",
     };
-
-    /// <summary>DriveInfo throws on UNC roots it can't resolve — SMB repos degrade to "unknown" rather than crashing the sidebar.</summary>
-    private static int? DiskPercent(string repoPath)
-    {
-        try
-        {
-            var root = Path.GetPathRoot(repoPath);
-            if (string.IsNullOrEmpty(root))
-            {
-                return null;
-            }
-
-            var drive = new DriveInfo(root);
-            if (!drive.IsReady || drive.TotalSize == 0)
-            {
-                return null;
-            }
-
-            var used = drive.TotalSize - drive.AvailableFreeSpace;
-            return (int)Math.Round(used * 100.0 / drive.TotalSize);
-        }
-        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
 
     public void Dispose() => _timer?.Dispose();
 }

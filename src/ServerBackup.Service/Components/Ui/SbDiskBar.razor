@@ -1,0 +1,18 @@
+<div class="sb-disk">
+    <div class="sb-disk-track">
+        <div class="sb-disk-fill @Tone" style="width:@(Percent.ToString(System.Globalization.CultureInfo.InvariantCulture))%"></div>
+    </div>
+    <span>%@Percent</span>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public int Percent { get; set; }
+
+    /// <summary>design-system.md §12.1 — %85 warning, %95 danger.</summary>
+    private string Tone => ServerBackup.Service.Storage.DiskUsage.IsDanger(Percent)
+        ? "sb-disk-fill--err"
+        : ServerBackup.Service.Storage.DiskUsage.IsWarning(Percent)
+            ? "sb-disk-fill--warn"
+            : "";
+}
