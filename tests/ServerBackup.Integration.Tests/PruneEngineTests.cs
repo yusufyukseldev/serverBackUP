@@ -112,7 +112,7 @@ public sealed class PruneEngineTests : IDisposable
         cts.CancelAfter(TimeSpan.FromMilliseconds(1));
 
         var pruneEngine = new PruneEngine(_repoPath, masterKey);
-        var act = async () => await pruneEngine.RunAsync(new RetentionPolicy(KeepLast: 1), dryRun: false, cts.Token);
+        var act = async () => await pruneEngine.RunAsync(new RetentionPolicy(KeepLast: 1), dryRun: false, ct: cts.Token);
 
         try
         {

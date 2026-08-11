@@ -193,7 +193,7 @@ public sealed class BackupSchedulerService(
                     if (policy is not null)
                     {
                         var pruneEngine = new PruneEngine(scheduled.RepoPath, masterKey);
-                        await pruneEngine.RunAsync(policy, dryRun: false, stoppingToken);
+                        await pruneEngine.RunAsync(policy, dryRun: false, planId: plan.PlanId, ct: stoppingToken);
                     }
                 }
 

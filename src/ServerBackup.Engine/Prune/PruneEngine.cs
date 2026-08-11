@@ -32,16 +32,36 @@ public sealed class PruneEngine
         _masterKey = masterKey;
     }
 
-    /// <summary>dryRun defaults to true — pruning is destructive and must be an explicit opt-in.</summary>
-    public async Task<PruneResult> RunAsync(RetentionPolicy policy, bool dryRun = true, CancellationToken ct = default)
+    /// <summary>
+    /// dryRun defaults to true — pruning is destructive and must be an explicit opt-in.
+    /// </summary>
+    /// <param name="planId">
+    /// When given, only that plan's snapshots are judged by the policy;
+    /// everything else in the repository is kept untouched. A plan's retention
+    /// rules describe that plan's own history, so applying them repository-wide
+    /// lets a short-lived plan delete another plan's archive.
+    /// </param>
+    public async Task<PruneResult> RunAsync(
+        RetentionPolicy policy, bool dryRun = true, string? planId = null, CancellationToken ct = default)
     {
         await using var db = CatalogDbContextFactory.Create(Path.Combine(_repoPath, "catalog.db"));
 
         var allSnapshots = await db.Snapshots.AsNoTracking().ToListAsync(ct);
-        var summaries = allSnapshots
+        var candidates = planId is null
+            ? allSnapshots
+            : allSnapshots.Where(s => s.PlanId == planId).ToList();
+
+        var summaries = candidates
             .Select(s => new SnapshotSummary(s.SnapshotId, s.StartedAtUtc, ParseTags(s.Tags)))
             .ToList();
         var keepIds = RetentionEvaluator.SelectSnapshotsToKeep(summaries, policy, DateTimeOffset.UtcNow);
+
+        // Out-of-scope snapshots are kept outright, which also keeps their
+        // blobs reachable during the mark phase below.
+        foreach (var snapshot in allSnapshots.Where(s => !candidates.Contains(s)))
+        {
+            keepIds.Add(snapshot.SnapshotId);
+        }
 
         // Immutability window (plan Faz 11): a snapshot younger than this can
         // never be deleted, regardless of what the retention policy says —

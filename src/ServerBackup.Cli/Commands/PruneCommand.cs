@@ -35,6 +35,10 @@ public sealed class PruneCommand : AsyncCommand<PruneCommand.Settings>
         [CommandOption("--keep-yearly")]
         public int? KeepYearly { get; init; }
 
+        [CommandOption("--plan")]
+        [Description("Sadece bu plana ait snapshot'lara uygula. Verilmezse depodaki tüm snapshot'lar değerlendirilir.")]
+        public string? PlanId { get; init; }
+
         [CommandOption("--apply")]
         [Description("Gerçekten sil/repack et. Verilmezse sadece ne yapılacağı gösterilir (dry-run, varsayılan).")]
         public bool Apply { get; init; }
@@ -56,7 +60,7 @@ public sealed class PruneCommand : AsyncCommand<PruneCommand.Settings>
                 KeepYearly: settings.KeepYearly);
 
             var engine = new PruneEngine(settings.Repo, masterKey);
-            var result = await engine.RunAsync(policy, dryRun: !settings.Apply, cancellationToken);
+            var result = await engine.RunAsync(policy, dryRun: !settings.Apply, planId: settings.PlanId, ct: cancellationToken);
 
             var mode = result.DryRun ? "[yellow](dry-run — hiçbir şey silinmedi)[/]" : "[green](uygulandı)[/]";
             AnsiConsole.MarkupLine($"Prune {mode}");
