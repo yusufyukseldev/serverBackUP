@@ -5,4 +5,5 @@ public sealed record BackupProgress(
     long FilesUnchanged,
     long FilesChanged,
     long NewBlobsWritten,
-    long NewBytesWritten);
+    long NewBytesWritten,
+    long EntriesSkipped = 0);

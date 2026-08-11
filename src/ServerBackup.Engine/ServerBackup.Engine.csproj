@@ -6,6 +6,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ServerBackup.Integration.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AlphaVSS" Version="2.0.3" />
     <PackageReference Include="Cronos" Version="0.13.0" />
     <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.10" />

@@ -61,14 +61,25 @@ public sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
                 }
             }
 
+            BackupProgress? lastProgress = null;
             var progress = new Progress<BackupProgress>(p =>
+            {
+                lastProgress = p;
                 AnsiConsole.MarkupLine(
-                    $"[grey]{p.FilesScanned} dosya ({p.FilesUnchanged} değişmedi, {p.FilesChanged} değişti) — {p.NewBlobsWritten} yeni blob, {p.NewBytesWritten:N0} bayt[/]"));
+                    $"[grey]{p.FilesScanned} dosya ({p.FilesUnchanged} değişmedi, {p.FilesChanged} değişti) — {p.NewBlobsWritten} yeni blob, {p.NewBytesWritten:N0} bayt[/]");
+            });
 
-            var engine = new BackupEngine(source, settings.Repo, masterKey, progress: progress);
+            var filter = new ScanFilter(settings.SourcePaths[0]);
+            var engine = new BackupEngine(source, settings.Repo, masterKey, filter: filter, progress: progress);
             var snapshotId = await engine.RunAsync(settings.SourcePaths, settings.Parent, ct: cancellationToken);
 
             AnsiConsole.MarkupLine($"[green]Yedekleme tamamlandı.[/] Snapshot: [bold]{snapshotId}[/]");
+            if (lastProgress is { EntriesSkipped: > 0 } p)
+            {
+                AnsiConsole.MarkupLine(
+                    $"[yellow]{p.EntriesSkipped} öğe okunamadı ve atlandı[/] (izin reddedildi veya dosya kilitli). Ayrıntılar depo denetim kaydında.");
+            }
+
             return 0;
         }
         finally

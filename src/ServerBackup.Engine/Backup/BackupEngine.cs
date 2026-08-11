@@ -69,7 +69,18 @@ public sealed class BackupEngine
         public readonly HashSet<string> VisitedFileRelativePaths = new(StringComparer.Ordinal);
 
         public readonly List<string> ChangedFileNames = [];
+
+        public long EntriesSkipped;
+
+        /// <summary>
+        /// First few skipped paths, for the audit entry. Capped because a
+        /// whole-volume backup can deny thousands of paths and the count is
+        /// what matters — the samples only need to identify the pattern.
+        /// </summary>
+        public readonly List<string> SkippedSamples = [];
     }
+
+    private const int MaxSkippedSamples = 20;
 
     public async Task<string> RunAsync(
         IReadOnlyList<string> sourcePaths, string? parentSnapshotId = null, string? planId = null, CancellationToken ct = default)
@@ -120,10 +131,16 @@ public sealed class BackupEngine
             var rootNodes = new List<TreeNode>();
             foreach (var path in sourcePaths)
             {
-                var entry = _source.GetEntry(path);
-                rootNodes.Add(entry.IsDirectory
+                var scanned = _source.GetEntry(path);
+                var entry = scanned with { Name = RootNodeName(scanned.Name) };
+                var rootNode = entry.IsDirectory
                     ? await BuildDirectoryNodeAsync(entry, entry.Name, parentCache, compressionChannel.Writer, counters, ct)
-                    : await BuildFileNodeAsync(entry, entry.Name, parentCache, compressionChannel.Writer, counters, ct));
+                    : await BuildFileNodeAsync(entry, entry.Name, parentCache, compressionChannel.Writer, counters, ct);
+
+                if (rootNode is not null)
+                {
+                    rootNodes.Add(rootNode);
+                }
             }
 
             compressionChannel.Writer.Complete();
@@ -157,6 +174,17 @@ public sealed class BackupEngine
             }
 
             await db.SaveChangesAsync(ct);
+
+            if (counters.EntriesSkipped > 0)
+            {
+                var samples = string.Join("; ", counters.SkippedSamples);
+                var more = counters.EntriesSkipped - counters.SkippedSamples.Count;
+                await AuditLogger.RecordAsync(
+                    db,
+                    "backup-skipped",
+                    $"{counters.EntriesSkipped} entry skipped (unreadable): {samples}{(more > 0 ? $"; +{more} more" : "")}",
+                    ct);
+            }
 
             return snapshotId;
         }
@@ -223,7 +251,7 @@ public sealed class BackupEngine
     {
         var nodes = new List<TreeNode>();
 
-        foreach (var child in _source.EnumerateChildren(directoryPath).OrderBy(e => e.Name, StringComparer.Ordinal))
+        foreach (var child in ListChildren(directoryPath, counters).OrderBy(e => e.Name, StringComparer.Ordinal))
         {
             ct.ThrowIfCancellationRequested();
             if (_filter?.IsExcluded(child) == true)
@@ -232,12 +260,64 @@ public sealed class BackupEngine
             }
 
             var childRelativePath = relativePath.Length == 0 ? child.Name : $"{relativePath}/{child.Name}";
-            nodes.Add(child.IsDirectory
+            var node = child.IsDirectory
                 ? await BuildDirectoryNodeAsync(child, childRelativePath, parentCache, writer, counters, ct)
-                : await BuildFileNodeAsync(child, childRelativePath, parentCache, writer, counters, ct));
+                : await BuildFileNodeAsync(child, childRelativePath, parentCache, writer, counters, ct);
+
+            if (node is not null)
+            {
+                nodes.Add(node);
+            }
         }
 
         return new Tree(nodes);
+    }
+
+    /// <summary>
+    /// Reduces a source root's name to a single safe path segment.
+    /// <c>DirectoryInfo("C:\").Name</c> is <c>"C:\"</c> — a rooted string, and
+    /// <see cref="Path.Combine(string, string)"/> silently discards its first
+    /// argument when the second is rooted. Storing that verbatim would make a
+    /// restore of a whole-volume snapshot write back over the live volume
+    /// instead of into the chosen target directory.
+    /// </summary>
+    internal static string RootNodeName(string name)
+    {
+        var trimmed = name.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var sanitized = trimmed
+            .Replace(":", "", StringComparison.Ordinal)
+            .Replace("\\", "", StringComparison.Ordinal)
+            .Replace("/", "", StringComparison.Ordinal);
+
+        return sanitized.Length == 0 ? "root" : sanitized;
+    }
+
+    /// <summary>
+    /// Enumerates a directory, treating an unreadable one as empty rather than
+    /// failing the whole run. Whole-volume sources always contain paths the
+    /// service account cannot open (other users' profiles, protected system
+    /// directories) and a backup that aborts on the first one is useless.
+    /// </summary>
+    private IReadOnlyList<SourceEntry> ListChildren(string directoryPath, RunCounters counters)
+    {
+        try
+        {
+            return _source.EnumerateChildren(directoryPath).ToList();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            RecordSkip(counters, directoryPath, ex);
+            return [];
+        }
+    }
+
+    private static void RecordSkip(RunCounters counters, string path, Exception ex)
+    {
+        Interlocked.Increment(ref counters.EntriesSkipped);
+        if (counters.SkippedSamples.Count < MaxSkippedSamples)
+        {
+            counters.SkippedSamples.Add($"{path} ({ex.GetType().Name})");
+        }
     }
 
     private async Task<TreeNode> BuildDirectoryNodeAsync(
@@ -265,7 +345,7 @@ public sealed class BackupEngine
             SubTreeBlobIdHex: subTreeBlobIdHex);
     }
 
-    private async Task<TreeNode> BuildFileNodeAsync(
+    private async Task<TreeNode?> BuildFileNodeAsync(
         SourceEntry entry, string relativePath, ParentSnapshotCache? parentCache,
         ChannelWriter<PendingBlob> writer, RunCounters counters, CancellationToken ct)
     {
@@ -280,11 +360,27 @@ public sealed class BackupEngine
             return cached;
         }
 
+        Stream stream;
+        try
+        {
+            stream = _source.OpenRead(entry.FullPath);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            // Locked or permission-denied file: drop it from this snapshot and
+            // keep going. The count surfaces in progress and the audit log so
+            // the skip is visible rather than silent.
+            counters.VisitedFileRelativePaths.Remove(relativePath);
+            RecordSkip(counters, entry.FullPath, ex);
+            ReportProgress(counters);
+            return null;
+        }
+
         Interlocked.Increment(ref counters.FilesChanged);
         counters.ChangedFileNames.Add(entry.Name);
 
         var chunkIds = new List<string>();
-        using (var stream = _source.OpenRead(entry.FullPath))
+        using (stream)
         {
             foreach (var chunk in _chunker.Chunk(stream))
             {
@@ -370,6 +466,7 @@ public sealed class BackupEngine
             FilesUnchanged: unchanged,
             FilesChanged: changed,
             NewBlobsWritten: Interlocked.Read(ref counters.NewBlobsWritten),
-            NewBytesWritten: Interlocked.Read(ref counters.NewBytesWritten)));
+            NewBytesWritten: Interlocked.Read(ref counters.NewBytesWritten),
+            EntriesSkipped: Interlocked.Read(ref counters.EntriesSkipped)));
     }
 }
