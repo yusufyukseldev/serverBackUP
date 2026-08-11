@@ -5,21 +5,17 @@
     <div class="sb-picker-chosen">
         @if (Paths.Count == 0)
         {
-            <p class="sb-hint">Henüz kaynak yol seçilmedi. Aşağıdan bir disk veya klasör ekleyin.</p>
+            <p class="sb-hint">Henüz kaynak yol seçilmedi.</p>
         }
         else
         {
-            <ul class="sb-picker-list">
+            <ul class="sb-chips">
                 @foreach (var path in Paths)
                 {
-                    <li>
+                    <li class="sb-chip">
                         <SbIcon Name="@(IsDriveRoot(path) ? "hdd" : "folder")" Small="true" />
-                        <span class="sb-picker-path" title="@path">@path</span>
-                        @if (IsDriveRoot(path))
-                        {
-                            <span class="sb-picker-tag">tüm disk</span>
-                        }
-                        <button type="button" class="sb-iconbtn" title="@($"{path} yolunu kaldır")"
+                        <span class="sb-chip-t" title="@path">@ShortLabel(path)</span>
+                        <button type="button" class="sb-chip-x" title="@($"{path} yolunu kaldır")"
                                 aria-label="@($"{path} yolunu kaldır")" @onclick="() => RemoveAsync(path)">
                             <SbIcon Name="x" Small="true" />
                         </button>
@@ -30,69 +26,69 @@
     </div>
 
     <div class="sb-picker-browser">
-        <div class="sb-picker-drives" role="group" aria-label="Diskler">
-            @foreach (var drive in _drives)
-            {
-                <button type="button"
-                        class="sb-btn sb-btn--sm @(IsCurrentDrive(drive.RootPath) ? "is-active" : "")"
-                        aria-pressed="@(IsCurrentDrive(drive.RootPath) ? "true" : "false")"
-                        title="@($"{drive.Label} — {Fmt.Bytes(drive.FreeBytes)} boş / {Fmt.Bytes(drive.TotalBytes)}")"
-                        @onclick="() => Browse(drive.RootPath)">
-                    <SbIcon Name="hdd" Small="true" /> @drive.Label
-                </button>
-            }
-        </div>
-
-        @if (_current is not null)
-        {
-            <nav class="sb-picker-crumbs" aria-label="Klasör yolu">
-                @foreach (var ancestor in FileSystemBrowser.GetAncestors(_current))
+        @* One bar, not three: drives, location and the add action sit together so
+           the browser stays short enough to use inside a dialog. *@
+        <div class="sb-picker-bar">
+            <div class="sb-picker-drives" role="group" aria-label="Diskler">
+                @foreach (var drive in _drives)
                 {
-                    <button type="button" class="sb-crumb" @onclick="() => Browse(ancestor)">
-                        @(Path.GetFileName(ancestor.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } n ? n : ancestor)
+                    <button type="button"
+                            class="sb-drive @(IsCurrentDrive(drive.RootPath) ? "is-active" : "")"
+                            aria-pressed="@(IsCurrentDrive(drive.RootPath) ? "true" : "false")"
+                            title="@($"{drive.Label} — {Fmt.Bytes(drive.FreeBytes)} boş / {Fmt.Bytes(drive.TotalBytes)}")"
+                            @onclick="() => Browse(drive.RootPath)">
+                        @drive.RootPath.TrimEnd('\\')
                     </button>
                 }
-            </nav>
+            </div>
 
-            <div class="sb-picker-actions">
-                <SbButton Size="SbButtonSize.Sm" OnClick="() => AddAsync(_current)"
+            @if (_current is not null)
+            {
+                <nav class="sb-picker-crumbs" aria-label="Klasör yolu">
+                    @foreach (var ancestor in FileSystemBrowser.GetAncestors(_current))
+                    {
+                        <button type="button" class="sb-crumb" @onclick="() => Browse(ancestor)">@CrumbLabel(ancestor)</button>
+                    }
+                </nav>
+
+                <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Primary" Icon="plus"
+                          OnClick="() => AddAsync(_current)"
                           AriaLabel="@($"{_current} yolunu kaynak yollara ekle")"
                           Disabled="@Paths.Contains(_current)"
                           DisabledReason="@(Paths.Contains(_current) ? "Bu yol zaten listede" : null)">
-                    @(IsDriveRoot(_current) ? "Bu diskin tamamını ekle" : "Bu klasörü ekle")
+                    @(IsDriveRoot(_current) ? "Diskin tamamı" : "Bu klasör")
                 </SbButton>
-                <span class="sb-hint">@_current</span>
-            </div>
+            }
+        </div>
 
-            <ul class="sb-picker-list sb-picker-list--browse">
-                @if (_children.Count == 0)
+        <ul class="sb-picker-list">
+            @if (_children.Count == 0)
+            {
+                <li class="sb-picker-empty">Bu klasörde alt klasör yok veya okuma izni bulunmuyor.</li>
+            }
+            else
+            {
+                @foreach (var child in _children)
                 {
-                    <li class="sb-hint">Bu klasörde alt klasör yok veya okuma izni bulunmuyor.</li>
+                    <li>
+                        <button type="button" class="sb-picker-open"
+                                aria-label="@($"{Path.GetFileName(child)} klasörünü aç")"
+                                @onclick="() => Browse(child)">
+                            <SbIcon Name="folder" Small="true" />
+                            <span>@Path.GetFileName(child)</span>
+                        </button>
+                        @* Her satırda çıplak "Ekle" ekran okuyucuda ayırt edilemez — ad klasörü söylemeli. *@
+                        <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Subtle"
+                                  AriaLabel="@($"{Path.GetFileName(child)} klasörünü kaynak yollara ekle")"
+                                  OnClick="() => AddAsync(child)"
+                                  Disabled="@Paths.Contains(child)"
+                                  DisabledReason="@(Paths.Contains(child) ? "Bu yol zaten listede" : null)">
+                            Ekle
+                        </SbButton>
+                    </li>
                 }
-                else
-                {
-                    @foreach (var child in _children)
-                    {
-                        <li>
-                            <button type="button" class="sb-picker-open"
-                                    aria-label="@($"{Path.GetFileName(child)} klasörünü aç")"
-                                    @onclick="() => Browse(child)">
-                                <SbIcon Name="folder" Small="true" />
-                                <span>@Path.GetFileName(child)</span>
-                            </button>
-                            @* Her satırda çıplak "Ekle" ekran okuyucuda ayırt edilemez — ad klasörü söylemeli. *@
-                            <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Subtle"
-                                      AriaLabel="@($"{Path.GetFileName(child)} klasörünü kaynak yollara ekle")"
-                                      OnClick="() => AddAsync(child)"
-                                      Disabled="@Paths.Contains(child)"
-                                      DisabledReason="@(Paths.Contains(child) ? "Bu yol zaten listede" : null)">
-                                Ekle
-                            </SbButton>
-                        </li>
-                    }
-                }
-            </ul>
-        }
+            }
+        </ul>
     </div>
 </div>
 
@@ -134,4 +130,13 @@
 
     private static bool IsDriveRoot(string path) =>
         string.Equals(Path.GetPathRoot(path), path, StringComparison.OrdinalIgnoreCase);
+
+    private static string CrumbLabel(string path) =>
+        Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } name
+            ? name
+            : path.TrimEnd(Path.DirectorySeparatorChar);
+
+    /// <summary>A chip shows the tail of the path; the full path stays in the tooltip.</summary>
+    private static string ShortLabel(string path) =>
+        IsDriveRoot(path) ? $"{path.TrimEnd(Path.DirectorySeparatorChar)} (tüm disk)" : Fmt.TruncatePath(path, 34);
 }

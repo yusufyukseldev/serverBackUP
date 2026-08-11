@@ -1,35 +1,20 @@
 @inject IJSRuntime JS
 
-<div class="sb-theme">
-    <span class="sb-theme-label" id="sb-theme-label">Görünüm</span>
-    <div class="sb-theme-btns" role="group" aria-labelledby="sb-theme-label">
-        @* aria-pressed is a tri-state: binding a bool would render it valueless, which is invalid. *@
-        @foreach (var choice in Choices)
-        {
-            <button type="button"
-                    class="sb-theme-btn @(_current == choice.Value ? "is-active" : "")"
-                    aria-pressed="@(_current == choice.Value ? "true" : "false")"
-                    title="@choice.Title"
-                    @onclick="() => SetAsync(choice.Value)">
-                <SbIcon Name="@choice.Icon" Small="true" />
-                <span class="sb-sr-only">@choice.Title</span>
-            </button>
-        }
-    </div>
-</div>
+@* The icon shows what a click gives you, not the current state: a moon means
+   "switch to dark". Labelling the destination is what makes a single-button
+   toggle readable without a caption. *@
+<button type="button" class="sb-theme-toggle"
+        title="@Label" aria-label="@Label"
+        @onclick="ToggleAsync">
+    <SbIcon Name="@(_theme == "dark" ? "sun" : "moon")" Small="true" />
+    <span>@(_theme == "dark" ? "Açık tema" : "Koyu tema")</span>
+</button>
 
 @code {
-    private sealed record Choice(string Value, string Icon, string Title);
-
-    private static readonly Choice[] Choices =
-    [
-        new("system", "monitor", "Sistem ayarını kullan"),
-        new("light", "sun", "Açık tema"),
-        new("dark", "moon", "Koyu tema"),
-    ];
-
     /// <summary>Unknown until the first interop call — the preference lives in the browser, not on the server.</summary>
-    private string? _current;
+    private string? _theme;
+
+    private string Label => _theme == "dark" ? "Açık temaya geç" : "Koyu temaya geç";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -38,12 +23,9 @@
             return;
         }
 
-        _current = await JS.InvokeAsync<string>("sbTheme.get");
+        _theme = await JS.InvokeAsync<string>("sbTheme.get");
         StateHasChanged();
     }
 
-    private async Task SetAsync(string value)
-    {
-        _current = await JS.InvokeAsync<string>("sbTheme.set", value);
-    }
+    private async Task ToggleAsync() => _theme = await JS.InvokeAsync<string>("sbTheme.toggle");
 }

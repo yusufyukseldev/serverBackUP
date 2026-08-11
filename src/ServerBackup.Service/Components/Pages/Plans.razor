@@ -93,9 +93,25 @@
 <SbDialog Title="Yeni plan" Description="Kaynaklar, zamanlama ve saklama politikası."
           Open="_createDialogOpen" OnClose="CloseCreateDialog">
     <ChildContent>
-        <div class="sb-fs">
-            <div class="sb-fs-title">1 · Hedef ve kaynaklar</div>
+        @* Three short panels instead of one long scroll: the retention rules were
+           at the bottom of a 1300px form and operators never found them. *@
+        <div class="sb-tabs" role="tablist" aria-label="Plan ayarları">
+            @foreach (var tab in Tabs)
+            {
+                <button type="button" role="tab" class="sb-tab @(_tab == tab.Id ? "is-active" : "")"
+                        aria-selected="@(_tab == tab.Id ? "true" : "false")"
+                        @onclick="() => _tab = tab.Id">
+                    @tab.Label
+                    <span class="sb-tab-sum">@TabSummary(tab.Id)</span>
+                </button>
+            }
+        </div>
 
+        @* @if, not [hidden]: .sb-fs sets display:flex, which beats the UA rule
+           for the hidden attribute, so the panels would all stay visible. *@
+        @if (_tab == "kaynak")
+        {
+        <div class="sb-fs">
             <SbField Label="Depo" For="f-plan-repo">
                 <select class="sb-select" id="f-plan-repo" @bind="_form.RepoPath">
                     @foreach (var repoPath in Options.Value.Repositories)
@@ -113,10 +129,11 @@
                 <SbPathPicker Paths="_form.SourcePaths" PathsChanged="p => _form.SourcePaths = p" />
             </SbField>
         </div>
+        }
 
+        @if (_tab == "zamanlama")
+        {
         <div class="sb-fs">
-            <div class="sb-fs-title">2 · Zamanlama</div>
-
             <label class="sb-check">
                 <input type="checkbox" @bind="_form.UseSimpleScheduler" />
                 Basit zamanlayıcı (gün, saat aralığı, sıklık)
@@ -173,28 +190,60 @@
                 <div class="sb-hint">@preview.NextRuns</div>
             </div>
         </div>
+        }
 
+        @if (_tab == "saklama")
+        {
         <div class="sb-fs">
-            <div class="sb-fs-title">3 · Saklama politikası</div>
-            <div class="sb-row sb-row--wrap">
-                <SbField Label="Son N" For="f-keep-last" Width="SbFieldWidth.Xs">
-                    <input type="number" min="0" class="sb-input" id="f-keep-last" @bind="_form.KeepLast" />
-                </SbField>
-                <SbField Label="Günlük" For="f-keep-daily" Width="SbFieldWidth.Xs">
-                    <input type="number" min="0" class="sb-input" id="f-keep-daily" @bind="_form.KeepDaily" />
-                </SbField>
-                <SbField Label="Haftalık" For="f-keep-weekly" Width="SbFieldWidth.Xs">
-                    <input type="number" min="0" class="sb-input" id="f-keep-weekly" @bind="_form.KeepWeekly" />
-                </SbField>
-                <SbField Label="Aylık" For="f-keep-monthly" Width="SbFieldWidth.Xs">
-                    <input type="number" min="0" class="sb-input" id="f-keep-monthly" @bind="_form.KeepMonthly" />
-                </SbField>
-                <SbField Label="Yıllık" For="f-keep-yearly" Width="SbFieldWidth.Xs">
-                    <input type="number" min="0" class="sb-input" id="f-keep-yearly" @bind="_form.KeepYearly" />
-                </SbField>
+            <SbField Label="Kaç snapshot saklansın?" Group="true">
+                <div class="sb-stack">
+                    @foreach (var preset in RetentionPresets)
+                    {
+                        <label class="sb-check">
+                            <input type="radio" name="retention" value="@preset.Id"
+                                   checked="@(_form.RetentionPreset == preset.Id)"
+                                   @onchange="() => ApplyPreset(preset)" />
+                            <span>
+                                <strong>@preset.Label</strong>
+                                <span class="sb-hint">@preset.Description</span>
+                            </span>
+                        </label>
+                    }
+                </div>
+            </SbField>
+
+            @if (_form.RetentionPreset == "ozel")
+            {
+                <div class="sb-row sb-row--wrap">
+                    <SbField Label="Son N" For="f-keep-last" Width="SbFieldWidth.Xs">
+                        <input type="number" min="0" class="sb-input" id="f-keep-last" @bind="_form.KeepLast" />
+                    </SbField>
+                    <SbField Label="Günlük" For="f-keep-daily" Width="SbFieldWidth.Xs">
+                        <input type="number" min="0" class="sb-input" id="f-keep-daily" @bind="_form.KeepDaily" />
+                    </SbField>
+                    <SbField Label="Haftalık" For="f-keep-weekly" Width="SbFieldWidth.Xs">
+                        <input type="number" min="0" class="sb-input" id="f-keep-weekly" @bind="_form.KeepWeekly" />
+                    </SbField>
+                    <SbField Label="Aylık" For="f-keep-monthly" Width="SbFieldWidth.Xs">
+                        <input type="number" min="0" class="sb-input" id="f-keep-monthly" @bind="_form.KeepMonthly" />
+                    </SbField>
+                    <SbField Label="Yıllık" For="f-keep-yearly" Width="SbFieldWidth.Xs">
+                        <input type="number" min="0" class="sb-input" id="f-keep-yearly" @bind="_form.KeepYearly" />
+                    </SbField>
+                </div>
+            }
+
+            <div class="sb-preview">
+                <div class="sb-preview-t">@RetentionSummary(BuildRetentionJson())</div>
+                <div class="sb-hint">
+                    Her kural kendi aralığındaki <em>en yeni</em> snapshot'ı tutar; bir snapshot birden fazla
+                    kuralla korunabilir. Kural dışı kalanlar budama çalıştığında silinir.
+                    Budama yalnızca <strong>bu planın</strong> snapshot'larına uygulanır; aynı depodaki
+                    diğer planların geçmişine dokunulmaz.
+                </div>
             </div>
-            <p class="sb-hint">Boş bırakılan alanlar dikkate alınmaz. Hiçbiri doldurulmazsa snapshot'lar budanmaz.</p>
         </div>
+        }
 
         @if (_formError is not null)
         {
@@ -215,10 +264,11 @@
         public IReadOnlyList<string> SourcePaths { get; set; } = [];
         public string Cron { get; set; } = "0 3 * * *";
 
+        public string RetentionPreset { get; set; } = "onerilen";
         public int? KeepLast { get; set; }
-        public int? KeepDaily { get; set; }
-        public int? KeepWeekly { get; set; }
-        public int? KeepMonthly { get; set; }
+        public int? KeepDaily { get; set; } = 7;
+        public int? KeepWeekly { get; set; } = 4;
+        public int? KeepMonthly { get; set; } = 12;
         public int? KeepYearly { get; set; }
 
         public bool UseSimpleScheduler { get; set; } = true;
@@ -233,6 +283,31 @@
 
     private sealed record PlanRow(
         string RepoPath, PlanEntity Plan, IReadOnlyList<string> SourcePaths, string RetentionText, string NextRunText);
+
+    private sealed record Tab(string Id, string Label);
+
+    private static readonly Tab[] Tabs =
+    [
+        new("kaynak", "Kaynak"),
+        new("zamanlama", "Zamanlama"),
+        new("saklama", "Saklama"),
+    ];
+
+    /// <summary>
+    /// A grandfather-father-son ladder is the standard shape and almost nobody
+    /// wants to invent their own, so the presets carry the decision and the
+    /// per-bucket fields only appear for "Özel".
+    /// </summary>
+    private sealed record RetentionPreset(string Id, string Label, string Description, int? Last, int? Daily, int? Weekly, int? Monthly, int? Yearly);
+
+    private static readonly RetentionPreset[] RetentionPresets =
+    [
+        new("onerilen", "Önerilen", "7 günlük · 4 haftalık · 12 aylık", null, 7, 4, 12, null),
+        new("uzun", "Uzun arşiv", "14 günlük · 8 haftalık · 24 aylık · 5 yıllık", null, 14, 8, 24, 5),
+        new("kisa", "Yalnızca son 10", "Son 10 snapshot tutulur, gerisi silinir", 10, null, null, null, null),
+        new("yok", "Budama yok", "Hiçbir snapshot silinmez; depo sürekli büyür", null, null, null, null, null),
+        new("ozel", "Özel", "Kural sayılarını kendin gir", null, 7, 4, 12, null),
+    ];
 
     private static readonly DayOfWeek[] WeekDayOrder =
     [
@@ -249,6 +324,7 @@
 
     private List<PlanRow>? _plans;
     private PlanForm _form = new();
+    private string _tab = "kaynak";
     private bool _createDialogOpen;
     private string? _formError;
     private string? _message;
@@ -261,7 +337,50 @@
     {
         _form = new PlanForm { RepoPath = Options.Value.Repositories.FirstOrDefault() ?? "" };
         _formError = null;
+        _tab = "kaynak";
         _createDialogOpen = true;
+    }
+
+    /// <summary>Each tab header carries its own state so nothing has to be opened to be checked.</summary>
+    private string TabSummary(string tabId) => tabId switch
+    {
+        "kaynak" => _form.SourcePaths.Count switch
+        {
+            0 => "yol seçilmedi",
+            1 => "1 yol",
+            var n => $"{n} yol",
+        },
+        "zamanlama" => BuildPreview().Description,
+        _ => RetentionSummary(BuildRetentionJson()),
+    };
+
+    private void ApplyPreset(RetentionPreset preset)
+    {
+        _form.RetentionPreset = preset.Id;
+
+        // "Özel" keeps whatever is already in the boxes so switching to it to
+        // tweak one number doesn't wipe the others.
+        if (preset.Id == "ozel")
+        {
+            return;
+        }
+
+        _form.KeepLast = preset.Last;
+        _form.KeepDaily = preset.Daily;
+        _form.KeepWeekly = preset.Weekly;
+        _form.KeepMonthly = preset.Monthly;
+        _form.KeepYearly = preset.Yearly;
+    }
+
+    private string? BuildRetentionJson()
+    {
+        var hasRetention = _form.KeepLast is not null || _form.KeepDaily is not null || _form.KeepWeekly is not null
+            || _form.KeepMonthly is not null || _form.KeepYearly is not null;
+
+        return hasRetention
+            ? JsonSerializer.Serialize(new RetentionPolicy(
+                _form.KeepLast, null, _form.KeepDaily, _form.KeepWeekly, _form.KeepMonthly, _form.KeepYearly))
+            : null;
     }
 
     private void CloseCreateDialog() => _createDialogOpen = false;
@@ -440,21 +559,23 @@
     {
         _formError = null;
 
+        // Reporting an error on a panel the operator cannot see is the same as
+        // reporting nothing, so every failure also opens the tab it belongs to.
         if (string.IsNullOrWhiteSpace(_form.RepoPath))
         {
-            _formError = "Bir depo seçin.";
+            (_tab, _formError) = ("kaynak", "Bir depo seçin.");
             return;
         }
 
         if (string.IsNullOrWhiteSpace(_form.Name))
         {
-            _formError = "Plana bir ad verin.";
+            (_tab, _formError) = ("kaynak", "Plana bir ad verin.");
             return;
         }
 
         if (_form.SourcePaths.Count == 0)
         {
-            _formError = "En az bir kaynak yol seçin.";
+            (_tab, _formError) = ("kaynak", "En az bir kaynak yol seçin.");
             return;
         }
 
@@ -463,7 +584,7 @@
         {
             if (_form.UseSimpleScheduler && _form.SelectedDays.Count == 0)
             {
-                _formError = "En az bir gün seçin.";
+                (_tab, _formError) = ("zamanlama", "En az bir gün seçin.");
                 return;
             }
 
@@ -472,16 +593,11 @@
         }
         catch (Exception ex) when (ex is ArgumentException or Cronos.CronFormatException)
         {
-            _formError = $"Zamanlama oluşturulamadı: {ex.Message}";
+            (_tab, _formError) = ("zamanlama", $"Zamanlama oluşturulamadı: {ex.Message}");
             return;
         }
 
-        var hasRetention = _form.KeepLast is not null || _form.KeepDaily is not null || _form.KeepWeekly is not null
-            || _form.KeepMonthly is not null || _form.KeepYearly is not null;
-        var retentionJson = hasRetention
-            ? JsonSerializer.Serialize(new RetentionPolicy(
-                _form.KeepLast, null, _form.KeepDaily, _form.KeepWeekly, _form.KeepMonthly, _form.KeepYearly))
-            : null;
+        var retentionJson = BuildRetentionJson();
 
         await using var db = CatalogDbContextFactory.Create(Path.Combine(_form.RepoPath, "catalog.db"));
         db.Plans.Add(new PlanEntity

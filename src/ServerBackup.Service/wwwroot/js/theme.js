@@ -4,39 +4,48 @@
 (function () {
     var KEY = 'sb-theme';
 
-    function read() {
+    function stored() {
         try {
             var value = localStorage.getItem(KEY);
-            return value === 'dark' || value === 'light' ? value : 'system';
+            return value === 'dark' || value === 'light' ? value : null;
         } catch (e) {
             // Private mode / storage disabled: fall back to following the OS.
-            return 'system';
+            return null;
         }
     }
 
+    function systemTheme() {
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+
+    // What the user actually sees, which is what the toggle must reflect: the
+    // stored choice if there is one, otherwise whatever the OS is asking for.
+    function effective() {
+        return stored() || systemTheme();
+    }
+
     function apply() {
-        var preference = read();
-        if (preference === 'system') {
-            document.documentElement.removeAttribute('data-theme');
-        } else {
+        var preference = stored();
+        if (preference) {
             document.documentElement.setAttribute('data-theme', preference);
+        } else {
+            document.documentElement.removeAttribute('data-theme');
         }
     }
 
     window.sbTheme = {
-        get: read,
+        get: effective,
         set: function (preference) {
             try {
-                if (preference === 'dark' || preference === 'light') {
-                    localStorage.setItem(KEY, preference);
-                } else {
-                    localStorage.removeItem(KEY);
-                }
+                localStorage.setItem(KEY, preference);
             } catch (e) {
                 // Storage failure only costs persistence; still switch this tab.
             }
             apply();
-            return read();
+            return effective();
+        },
+        toggle: function () {
+            return window.sbTheme.set(effective() === 'dark' ? 'light' : 'dark');
         }
     };
 

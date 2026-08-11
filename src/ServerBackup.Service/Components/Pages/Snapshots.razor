@@ -147,10 +147,9 @@
                                 <tbody>
                                     @foreach (var node in SortedNodes)
                                     {
-                                        var canOpen = node.Kind == TreeNodeKind.Directory && node.SubTreeBlobIdHex is not null;
-                                        <tr class="@(canOpen ? "is-clickable" : "")"
-                                            tabindex="@(canOpen ? 0 : -1)"
-                                            @onclick="() => OpenDirectoryAsync(node)"
+                                        <tr class="is-clickable @(_selectedFile?.Name == node.Name && node.Kind == TreeNodeKind.File ? "is-active" : "")"
+                                            tabindex="0"
+                                            @onclick="() => ActivateAsync(node)"
                                             @onkeydown="e => OnNodeKeyDown(e, node)">
                                             <td><SbIcon Name="@(node.Kind == TreeNodeKind.Directory ? "folder" : "file")" Small="true" /></td>
                                             <td class="sb-name">@node.Name</td>
@@ -168,6 +167,28 @@
     </div>
 </div>
 
+<SbDrawer Title="Dosya ayrıntısı" Open="@(_selectedFile is not null)" OnClose="() => _selectedFile = null">
+    @if (_selectedFile is { } file)
+    {
+        <dl class="sb-dl">
+            <dt>Ad</dt><dd class="sb-name">@file.Name</dd>
+            <dt>Snapshot içindeki yol</dt><dd class="mono">@RelativePathOf(file.Name)</dd>
+            <dt>Boyut</dt><dd>@Fmt.Bytes(file.Size)</dd>
+            <dt>Değiştirilme</dt><dd>@Fmt.DateTime(DateTimeOffset.FromFileTime(file.ModifiedAtFileTimeUtc))</dd>
+            <dt>Parça sayısı</dt><dd>@(file.ChunkBlobIdsHex?.Count ?? 0)</dd>
+            <dt>İzinler</dt><dd>@(file.Sddl is null ? "Kaydedilmemiş" : "Kaynaktaki haliyle saklandı")</dd>
+        </dl>
+
+        <SbBanner Tone="SbBannerTone.Neutral" Icon="lock"
+                  Title="İçerik burada gösterilmez"
+                  Body="Listedeki bilgiler klasör ağacından okunur; dosyanın kendisi ancak geri yüklenirken çözülür." />
+
+        <SbButton Variant="SbButtonVariant.Primary" Icon="restore" OnClick="() => RestoreFile(file)">
+            Bu dosyayı geri yükle
+        </SbButton>
+    }
+</SbDrawer>
+
 @code {
     private sealed record Crumb(string Name, string TreeBlobIdHex);
 
@@ -183,6 +204,7 @@
     /// <summary>Each level's tree blob id, so going up is a pop instead of re-walking the tree from the root.</summary>
     private readonly List<Crumb> _trail = [];
     private List<TreeNode>? _currentNodes;
+    private TreeNode? _selectedFile;
 
     private IEnumerable<TreeNode> SortedNodes => (_currentNodes ?? [])
         .OrderByDescending(n => n.Kind == TreeNodeKind.Directory)
@@ -282,6 +304,22 @@
         _currentNodes = null;
     }
 
+    /// <summary>
+    /// A row click means "show me this": a folder opens, a file opens its
+    /// details. Rows used to be inert unless they were an openable folder,
+    /// which reads as a broken table.
+    /// </summary>
+    private async Task ActivateAsync(TreeNode node)
+    {
+        if (node.Kind == TreeNodeKind.File)
+        {
+            _selectedFile = node;
+            return;
+        }
+
+        await OpenDirectoryAsync(node);
+    }
+
     private async Task OpenDirectoryAsync(TreeNode node)
     {
         if (node.Kind != TreeNodeKind.Directory || node.SubTreeBlobIdHex is null)
@@ -289,9 +327,20 @@
             return;
         }
 
+        _selectedFile = null;
         _trail.Add(new Crumb(node.Name, node.SubTreeBlobIdHex));
         await LoadNodesAsync(node.SubTreeBlobIdHex);
     }
+
+    /// <summary>Snapshot-relative path, which is the form a selective restore takes.</summary>
+    private string RelativePathOf(string name) =>
+        _trail.Count == 0 ? name : $"{string.Join("/", _trail.Select(c => c.Name))}/{name}";
+
+    private void RestoreFile(TreeNode file) =>
+        Nav.NavigateTo(
+            $"restore?repo={Uri.EscapeDataString(_selectedRepo ?? "")}"
+            + $"&snapshot={_selectedSnapshot!.SnapshotId}"
+            + $"&path={Uri.EscapeDataString(RelativePathOf(file.Name))}");
 
     private async Task GoToDepthAsync(int depth)
     {
@@ -309,7 +358,7 @@
     {
         if (e.Key is "Enter" or " " or "ArrowRight")
         {
-            await OpenDirectoryAsync(node);
+            await ActivateAsync(node);
         }
         else if (e.Key is "Backspace" or "ArrowLeft" && _trail.Count > 0)
         {

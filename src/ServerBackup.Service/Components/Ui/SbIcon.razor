@@ -1,5 +1,7 @@
+@* Fingerprinted: the sprite is fetched as its own document, so a cached copy
+   from an earlier build would silently render nothing for new symbols. *@
 <svg class="ic @(Small ? "ic-sm" : "")" aria-hidden="true" focusable="false">
-    <use href="icons.svg#i-@Name" />
+    <use href="@($"{Assets["icons.svg"]}#i-{Name}")" />
 </svg>
 
 @code {

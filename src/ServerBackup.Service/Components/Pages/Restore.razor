@@ -30,7 +30,7 @@
             <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="@_error" />
         }
 
-        <SbCard Title="@Steps[_step - 1].Label">
+        <SbCard Title="@(_step == 4 ? "Üzerine yazma politikası" : Steps[_step - 1].Label)">
             <div class="sb-stack">
                 @switch (_step)
                 {
@@ -162,6 +162,8 @@
                             <dt>Depo</dt><dd>@RepoNaming.DisplayName(_repoPath ?? "")</dd>
                             <dt>Snapshot</dt><dd class="mono">@_snapshotId</dd>
                             <dt>Alındığı tarih</dt><dd>@SelectedSnapshotDate</dd>
+                            <dt>Kapsam</dt>
+                            <dd>@(PathQuery is { Length: > 0 } p ? $"Yalnızca {p}" : "Snapshot'ın tamamı")</dd>
                             <dt>Nereye</dt>
                             <dd>
                                 @if (_inPlace)
@@ -236,7 +238,7 @@
         new(1, "Depo"),
         new(2, "Snapshot"),
         new(3, "Nereye"),
-        new(4, "Üzerine yazma politikası"),
+        new(4, "Çakışma"),
         new(5, "Onay"),
     ];
 
@@ -248,6 +250,10 @@
 
     [SupplyParameterFromQuery(Name = "mode")]
     private string? ModeQuery { get; set; }
+
+    /// <summary>Snapshot-relative path when the operator came from a single file in the browser.</summary>
+    [SupplyParameterFromQuery(Name = "path")]
+    private string? PathQuery { get; set; }
 
     private int _step = 1;
     private string? _repoPath;
@@ -420,14 +426,16 @@
         {
             var engine = new RestoreEngine(_repoPath, _masterKey);
 
+            var selected = PathQuery is { Length: > 0 } path ? new[] { path } : null;
+
             if (_inPlace)
             {
-                var written = await engine.RestoreInPlaceAsync(_snapshotId, overwritePolicy: _overwrite);
+                var written = await engine.RestoreInPlaceAsync(_snapshotId, selected, _overwrite);
                 Log("Bilgi", $"Yedeğe dönüldü: {string.Join(", ", written)}");
             }
             else
             {
-                await engine.RestoreAsync(_snapshotId, _target, overwritePolicy: _overwrite);
+                await engine.RestoreAsync(_snapshotId, _target, selected, _overwrite);
                 Log("Bilgi", "Geri yükleme tamamlandı.");
             }
         }

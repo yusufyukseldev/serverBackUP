@@ -50,8 +50,12 @@ var app = builder.Build();
 
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseStaticFiles();
 app.UseAntiforgery();
+
+// MapStaticAssets, not UseStaticFiles: it serves every asset under a
+// content-hashed URL, so a stylesheet change can never be masked by a
+// browser cache holding the previous build's file.
+app.MapStaticAssets();
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestampUtc = DateTimeOffset.UtcNow })).AllowAnonymous();
 
