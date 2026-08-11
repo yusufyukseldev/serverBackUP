@@ -24,6 +24,7 @@ public sealed class PlansTests : BunitContext, IDisposable
     private const string Password = "correct horse battery staple";
 
     private readonly string _repoPath = Path.Combine(Path.GetTempPath(), "sb-ui-plans-repo-" + Guid.NewGuid().ToString("n"));
+    private readonly TestRepositoryRegistry _registry = new();
 
     [Fact]
     public async Task Editing_a_plan_keeps_its_id_so_the_snapshots_it_took_stay_attached()
@@ -106,7 +107,7 @@ public sealed class PlansTests : BunitContext, IDisposable
 
     private IRenderedComponent<Plans> RenderPlans()
     {
-        Services.AddSingleton(Options.Create(new ServerBackupOptions { Repositories = [_repoPath] }));
+        Services.AddSingleton(_registry.Create(_repoPath));
         Services.AddSingleton(new JobQueue());
 
         var cut = Render<Plans>();
@@ -167,6 +168,7 @@ public sealed class PlansTests : BunitContext, IDisposable
             Directory.Delete(_repoPath, recursive: true);
         }
 
+        _registry.Dispose();
         base.Dispose();
     }
 }

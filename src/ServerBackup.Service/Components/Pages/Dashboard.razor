@@ -8,7 +8,7 @@
 @using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
-@inject IOptions<ServerBackupOptions> Options
+@inject RepositoryRegistry Repos
 @inject NavigationManager Nav
 
 <PageHeader Title="Genel Bakış" />
@@ -155,7 +155,7 @@ else
         var totalSnapshots = 0;
         var now = DateTimeOffset.UtcNow;
 
-        foreach (var repoPath in Options.Value.Repositories)
+        foreach (var repoPath in Repos.Paths)
         {
             var dbPath = Path.Combine(repoPath, "catalog.db");
             if (!File.Exists(dbPath))

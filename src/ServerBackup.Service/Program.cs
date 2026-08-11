@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Authentication.Negotiate;
+using Microsoft.Extensions.Options;
 using Serilog;
 using ServerBackup.Engine.Notifications;
 using ServerBackup.Engine.Scheduling;
 using ServerBackup.Service.Components;
 using ServerBackup.Service.Scheduling;
+using ServerBackup.Service.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,6 +21,7 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
         retainedFileCountLimit: 30));
 
 builder.Services.Configure<ServerBackupOptions>(builder.Configuration.GetSection(ServerBackupOptions.SectionName));
+builder.Services.AddSingleton(sp => new RepositoryRegistry(sp.GetRequiredService<IOptions<ServerBackupOptions>>().Value));
 builder.Services.AddSingleton<JobQueue>();
 builder.Services.AddSingleton<INotifier, WindowsEventLogNotifier>();
 builder.Services.AddHostedService<BackupSchedulerService>();

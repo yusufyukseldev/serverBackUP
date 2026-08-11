@@ -19,12 +19,13 @@ public sealed class DashboardTests : BunitContext, IDisposable
     private const string Password = "correct horse battery staple";
 
     private readonly string _repoPath = Path.Combine(Path.GetTempPath(), "sb-ui-dash-repo-" + Guid.NewGuid().ToString("n"));
+    private readonly TestRepositoryRegistry _registry = new();
     private readonly string _sourcePath = Path.Combine(Path.GetTempPath(), "sb-ui-dash-src-" + Guid.NewGuid().ToString("n"));
 
     [Fact]
     public void Shows_a_helpful_message_when_no_repositories_are_configured()
     {
-        Services.AddSingleton(Options.Create(new ServerBackupOptions { Repositories = [] }));
+        Services.AddSingleton(_registry.Create());
 
         var cut = Render<Dashboard>();
 
@@ -42,7 +43,7 @@ public sealed class DashboardTests : BunitContext, IDisposable
         var engine = new BackupEngine(new LocalSourceProvider(), _repoPath, masterKey);
         await engine.RunAsync([_sourcePath]);
 
-        Services.AddSingleton(Options.Create(new ServerBackupOptions { Repositories = [_repoPath] }));
+        Services.AddSingleton(_registry.Create(_repoPath));
 
         var cut = Render<Dashboard>();
         cut.WaitForAssertion(() => cut.Markup.Should().Contain(_repoPath), TimeSpan.FromSeconds(5));
@@ -67,7 +68,7 @@ public sealed class DashboardTests : BunitContext, IDisposable
             await db.SaveChangesAsync();
         }
 
-        Services.AddSingleton(Options.Create(new ServerBackupOptions { Repositories = [_repoPath] }));
+        Services.AddSingleton(_registry.Create(_repoPath));
 
         var cut = Render<Dashboard>();
         cut.WaitForAssertion(() => cut.Markup.Should().Contain("sb-banner--err"), TimeSpan.FromSeconds(5));
@@ -85,6 +86,7 @@ public sealed class DashboardTests : BunitContext, IDisposable
             }
         }
 
+        _registry.Dispose();
         base.Dispose();
     }
 }

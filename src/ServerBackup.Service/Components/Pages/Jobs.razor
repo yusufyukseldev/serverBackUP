@@ -7,7 +7,7 @@
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
 @implements IDisposable
-@inject IOptions<ServerBackupOptions> Options
+@inject RepositoryRegistry Repos
 
 <PageHeader Title="İş geçmişi">
     <Actions>
@@ -24,7 +24,7 @@
             <SbField Label="Depo" For="f-jobs-repo" Width="SbFieldWidth.Md">
                 <select class="sb-select" id="f-jobs-repo" @bind="_repoFilter">
                     <option value="">Tüm depolar</option>
-                    @foreach (var repoPath in Options.Value.Repositories)
+                    @foreach (var repoPath in Repos.Paths)
                     {
                         <option value="@repoPath">@RepoNaming.DisplayName(repoPath)</option>
                     }
@@ -172,7 +172,7 @@
     {
         var jobs = new List<JobRow>();
 
-        foreach (var repoPath in Options.Value.Repositories)
+        foreach (var repoPath in Repos.Paths)
         {
             var dbPath = Path.Combine(repoPath, "catalog.db");
             if (!File.Exists(dbPath))

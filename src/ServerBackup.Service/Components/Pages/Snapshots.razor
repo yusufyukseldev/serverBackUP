@@ -11,7 +11,7 @@
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
 @implements IDisposable
-@inject IOptions<ServerBackupOptions> Options
+@inject RepositoryRegistry Repos
 @inject NavigationManager Nav
 
 <PageHeader Title="Snapshot'lar" />
@@ -22,7 +22,7 @@
             <SbField Label="Depo" For="f-snap-repo" Width="SbFieldWidth.Md">
                 <select class="sb-select" id="f-snap-repo" @bind="_selectedRepo" @bind:after="OnRepoChangedAsync">
                     <option value="">— depo seçin —</option>
-                    @foreach (var repoPath in Options.Value.Repositories)
+                    @foreach (var repoPath in Repos.Paths)
                     {
                         <option value="@repoPath">@RepoNaming.DisplayName(repoPath)</option>
                     }

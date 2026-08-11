@@ -14,18 +14,28 @@
 @using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
-@inject IOptions<ServerBackupOptions> Options
+@inject RepositoryRegistry Repos
 
-<PageHeader Title="Depolar" />
+<PageHeader Title="Depolar">
+    <Actions>
+        <SbButton Variant="SbButtonVariant.Primary" Icon="plus" OnClick="OpenAddDialog">Depo ekle</SbButton>
+    </Actions>
+</PageHeader>
 
 <div class="sb-content">
+@if (_message is not null)
+{
+    <SbBanner Tone="@_messageTone" Icon="@(_messageTone == SbBannerTone.Err ? "alert" : "check")" Title="@_message" />
+}
+
 @if (_rows is null)
 {
     <SbSkeleton />
 }
 else if (_rows.Count == 0)
 {
-    <SbEmptyState Message="Yapılandırılmış depo yok. appsettings.json içindeki ServerBackup:Repositories listesine bir depo yolu ekleyin." />
+    <SbEmptyState Message="Henüz depo yok. Bir depo, yedeklerin şifreli olarak yazıldığı klasördür — yerel disk, USB veya ağ paylaşımı olabilir."
+                  ActionText="Depo ekle" OnAction="OpenAddDialog" />
 }
 else
 {
@@ -40,6 +50,7 @@ else
                 <th class="r">Boyut</th>
                 <th>Disk</th>
                 <th>Son doğrulama</th>
+                <th><span class="sb-sr-only">Eylemler</span></th>
             </tr>
         </thead>
         <tbody>
@@ -80,6 +91,12 @@ else
                         }
                     </td>
                     <td class="sb-hint">—</td>
+                    @* Satırın kendisi çekmeceyi açıyor; bu hücredeki tık oraya sızmamalı. *@
+                    <td class="r" @onclick:stopPropagation="true">
+                        <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Subtle" Icon="unlink"
+                                  AriaLabel="@($"'{row.DisplayName}' deposunun bağlantısını kaldır")"
+                                  OnClick="() => AskDetach(row)" />
+                    </td>
                 </tr>
             }
         </tbody>
@@ -143,6 +160,125 @@ else
         </div>
     }
 </SbDrawer>
+
+<SbDialog Title="Depo ekle" Description="Var olan bir depoyu panele bağlayın ya da yeni bir depo oluşturun."
+          Open="_addDialogOpen" OnClose="CloseAddDialog">
+    <ChildContent>
+        <div class="sb-stack">
+            <SbField Label="Ne yapmak istiyorsunuz?" Group="true">
+                <div class="sb-stack">
+                    <label class="sb-check">
+                        <input type="radio" name="addmode" value="attach"
+                               checked="@(!_addCreateNew)" @onchange="() => SetAddMode(false)" />
+                        <span>
+                            <strong>Var olan bir depoyu bağla</strong>
+                            <span class="sb-hint">Başka bir sunucuda ya da USB diskte oluşturulmuş bir depoyu bu panele tanıt.</span>
+                        </span>
+                    </label>
+                    <label class="sb-check">
+                        <input type="radio" name="addmode" value="create"
+                               checked="@_addCreateNew" @onchange="() => SetAddMode(true)" />
+                        <span>
+                            <strong>Yeni depo oluştur</strong>
+                            <span class="sb-hint">Boş bir klasörde sıfırdan şifreli bir depo kur.</span>
+                        </span>
+                    </label>
+                </div>
+            </SbField>
+
+            @if (_addCreateNew)
+            {
+                <SbField Label="Nerede oluşturulsun?" For="f-add-parent"
+                         Hint="Seçilen klasörün altında, verdiğiniz adla yeni bir klasör açılır.">
+                    <input class="sb-input sb-input--mono" id="f-add-parent" @bind="_addParentPath" placeholder="D:\Yedekler" />
+                </SbField>
+
+                <SbPathPicker Single="true" Paths="AddParentPaths" PathsChanged="OnAddParentPicked" />
+
+                <SbField Label="Depo adı" For="f-add-name">
+                    <input class="sb-input" id="f-add-name" @bind="_addRepoName" placeholder="Muhasebe-Depo" />
+                </SbField>
+
+                <SbField Label="Depo parolası" For="f-add-pwd"
+                         Hint="Bu parola olmadan yedekler açılamaz — kaybolursa veri kurtarılamaz. En az 8 karakter.">
+                    <input class="sb-input" type="password" id="f-add-pwd" @bind="_addPassword" />
+                </SbField>
+                <SbField Label="Parola (tekrar)" For="f-add-pwd2">
+                    <input class="sb-input" type="password" id="f-add-pwd2" @bind="_addPasswordAgain" />
+                </SbField>
+
+                <SbField Label="Koruma" Group="true">
+                    <div class="sb-stack">
+                        <label class="sb-check">
+                            <input type="checkbox" @bind="_addUnattended" />
+                            <span>
+                                <strong>Servis parolasız açabilsin (DPAPI)</strong>
+                                <span class="sb-hint">Zamanlanmış yedekler bunsuz çalışamaz. Karşılığı: bu makinede SYSTEM yetkisi ele geçiren biri depoyu açabilir.</span>
+                            </span>
+                        </label>
+                        <label class="sb-check">
+                            <input type="checkbox" @bind="_addAppendOnly" />
+                            <span>
+                                <strong>Append-only</strong>
+                                <span class="sb-hint">Hiçbir snapshot silinemez; budama da çalışmaz. Fidye yazılımına karşı en katı kip.</span>
+                            </span>
+                        </label>
+                    </div>
+                </SbField>
+
+                @if (!_addAppendOnly)
+                {
+                    <SbField Label="Değişmezlik penceresi (gün)" For="f-add-imm" Width="SbFieldWidth.Xs"
+                             Hint="Bu yaştan genç snapshot'lar panelden bile silinemez. Boş bırakılırsa pencere yok.">
+                        <input type="number" min="0" class="sb-input" id="f-add-imm" @bind="_addImmutabilityDays" />
+                    </SbField>
+                }
+            }
+            else
+            {
+                <SbField Label="Depo klasörü" For="f-add-path"
+                         Hint="İçinde config.json bulunan klasörü seçin.">
+                    <input class="sb-input sb-input--mono" id="f-add-path" @bind="_addPath" placeholder="D:\Yedekler\Muhasebe-Depo" />
+                </SbField>
+
+                <SbPathPicker Single="true" Paths="AddPaths" PathsChanged="OnAddPathPicked" />
+            }
+
+            @if (_addError is not null)
+            {
+                <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="@_addError" />
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="CloseAddDialog">Vazgeç</SbButton>
+        <SbButton Variant="SbButtonVariant.Primary" OnClick="AddRepositoryAsync"
+                  Disabled="@_addRunning" DisabledReason="@(_addRunning ? "İşlem sürüyor" : null)">
+            @(_addRunning ? "Oluşturuluyor..." : _addCreateNew ? "Depoyu oluştur" : "Depoyu bağla")
+        </SbButton>
+    </Footer>
+</SbDialog>
+
+<SbDialog Title="Bağlantıyı kaldır" Size="SbDialogSize.Sm"
+          Description="@($"'{_detachTarget?.DisplayName}' bu panelden çıkarılacak.")"
+          Open="@(_detachTarget is not null)" OnClose="() => _detachTarget = null">
+    <ChildContent>
+        <SbBanner Tone="SbBannerTone.Warn" Icon="alert"
+                  Title="Diskteki veriler silinmez"
+                  Body="Depo klasörü olduğu gibi kalır; tek bir yedek bile silinmez. Yalnızca bu panel onu yönetmeyi bırakır: planları çalışmaz, snapshot'ları listelenmez. Aynı yolu tekrar bağlayınca her şey geri gelir." />
+        @if (_detachTarget is not null)
+        {
+            <dl class="sb-dl">
+                <dt>Yol</dt><dd class="mono">@_detachTarget.RepoPath</dd>
+                <dt>Snapshot</dt><dd>@_detachTarget.SnapshotCount</dd>
+            </dl>
+        }
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="() => _detachTarget = null">Vazgeç</SbButton>
+        <SbButton Variant="SbButtonVariant.Danger" Icon="unlink" OnClick="DetachRepositoryAsync">Bağlantıyı kaldır</SbButton>
+    </Footer>
+</SbDialog>
 
 <SbDialog Title="Yedek al" Description="@(_selectedRow?.RepoPath)" Open="_backupDialogOpen" OnClose="CloseBackupDialog" Size="SbDialogSize.Md">
     <ChildContent>
@@ -256,6 +392,23 @@ else
 
     private List<RepoRow>? _rows;
     private RepoRow? _selectedRow;
+
+    private bool _addDialogOpen;
+    private bool _addCreateNew;
+    private bool _addRunning;
+    private string? _addError;
+    private string _addPath = "";
+    private string _addParentPath = "";
+    private string _addRepoName = "";
+    private string _addPassword = "";
+    private string _addPasswordAgain = "";
+    private bool _addUnattended = true;
+    private bool _addAppendOnly;
+    private int? _addImmutabilityDays;
+
+    private RepoRow? _detachTarget;
+    private string? _message;
+    private SbBannerTone _messageTone = SbBannerTone.Ok;
     private RepositoryConfig? _drawerConfig;
     private int _drawerPlanCount;
     private PlanEntity? _drawerSinglePlan;
@@ -286,11 +439,13 @@ else
         _ => "Birden fazla plan var — hangi saklama politikasının kullanılacağı belirsiz",
     };
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync() => await LoadRowsAsync();
+
+    private async Task LoadRowsAsync()
     {
         var rows = new List<RepoRow>();
 
-        foreach (var repoPath in Options.Value.Repositories)
+        foreach (var repoPath in Repos.Paths)
         {
             var dbPath = Path.Combine(repoPath, "catalog.db");
             var unattended = UnattendedKeyStore.IsEnabled(repoPath);
@@ -317,6 +472,196 @@ else
         }
 
         _rows = rows;
+    }
+
+    private IReadOnlyList<string> AddPaths => string.IsNullOrWhiteSpace(_addPath) ? [] : [_addPath];
+
+    private IReadOnlyList<string> AddParentPaths => string.IsNullOrWhiteSpace(_addParentPath) ? [] : [_addParentPath];
+
+    private void OnAddPathPicked(IReadOnlyList<string> paths) => _addPath = paths.Count == 0 ? "" : paths[0];
+
+    private void OnAddParentPicked(IReadOnlyList<string> paths) => _addParentPath = paths.Count == 0 ? "" : paths[0];
+
+    private void OpenAddDialog()
+    {
+        (_addPath, _addParentPath, _addRepoName) = ("", "", "");
+        (_addPassword, _addPasswordAgain) = ("", "");
+        (_addUnattended, _addAppendOnly, _addImmutabilityDays) = (true, false, null);
+        (_addCreateNew, _addError, _message) = (false, null, null);
+        _addDialogOpen = true;
+    }
+
+    private void CloseAddDialog() => _addDialogOpen = false;
+
+    private void SetAddMode(bool createNew)
+    {
+        _addCreateNew = createNew;
+        _addError = null;
+    }
+
+    private async Task AddRepositoryAsync()
+    {
+        _addError = null;
+        _addRunning = true;
+
+        try
+        {
+            var repoPath = _addCreateNew ? await CreateRepositoryAsync() : AttachRepository();
+            if (repoPath is null)
+            {
+                return;
+            }
+
+            Repos.Add(repoPath);
+            _addDialogOpen = false;
+            _messageTone = SbBannerTone.Ok;
+            _message = _addCreateNew
+                ? $"'{RepoNaming.DisplayName(repoPath)}' deposu oluşturuldu ve panele bağlandı."
+                : $"'{RepoNaming.DisplayName(repoPath)}' deposu panele bağlandı.";
+
+            await LoadRowsAsync();
+        }
+        catch (Exception ex)
+        {
+            _addError = ex.Message;
+        }
+        finally
+        {
+            _addRunning = false;
+        }
+    }
+
+    /// <summary>Returns the path to register, or null when the form is not valid yet.</summary>
+    private string? AttachRepository()
+    {
+        var path = _addPath.Trim();
+
+        if (path.Length == 0)
+        {
+            _addError = "Bir depo klasörü seçin.";
+            return null;
+        }
+
+        if (!FileSystemBrowser.DirectoryExists(path))
+        {
+            _addError = "Bu klasör bulunamadı.";
+            return null;
+        }
+
+        // config.json is what makes a folder a repository; without it the panel
+        // would list an empty row that no operation can use.
+        if (!File.Exists(Path.Combine(path, "config.json")))
+        {
+            _addError = "Bu klasörde bir ServerBackup deposu yok (config.json bulunamadı).";
+            return null;
+        }
+
+        if (Repos.Contains(path))
+        {
+            _addError = "Bu depo zaten panele bağlı.";
+            return null;
+        }
+
+        return path;
+    }
+
+    private async Task<string?> CreateRepositoryAsync()
+    {
+        var parent = _addParentPath.Trim();
+        var name = _addRepoName.Trim();
+
+        if (parent.Length == 0)
+        {
+            _addError = "Deponun oluşturulacağı klasörü seçin.";
+            return null;
+        }
+
+        if (name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            _addError = "Geçerli bir depo adı yazın (yol ayracı ve özel karakter içeremez).";
+            return null;
+        }
+
+        if (_addPassword.Length < 8)
+        {
+            _addError = "Depo parolası en az 8 karakter olmalı.";
+            return null;
+        }
+
+        if (_addPassword != _addPasswordAgain)
+        {
+            _addError = "Parolalar birbirini tutmuyor.";
+            return null;
+        }
+
+        var repoPath = Path.Combine(parent, name);
+
+        if (File.Exists(Path.Combine(repoPath, "config.json")))
+        {
+            _addError = "Bu yolda zaten bir depo var. Onu bağlamak için 'Var olan bir depoyu bağla' seçeneğini kullanın.";
+            return null;
+        }
+
+        if (Directory.Exists(repoPath) && Directory.EnumerateFileSystemEntries(repoPath).Any())
+        {
+            _addError = "Bu klasör boş değil. Depo boş bir klasörde oluşturulmalı.";
+            return null;
+        }
+
+        await RepositoryManager.InitializeAsync(
+            repoPath, _addPassword, _addAppendOnly ? null : _addImmutabilityDays, _addAppendOnly);
+
+        if (_addUnattended)
+        {
+            var masterKey = await RepositoryKeyStore.UnlockAsync(repoPath, _addPassword);
+            try
+            {
+                UnattendedKeyStore.Enable(repoPath, masterKey);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(masterKey);
+            }
+        }
+
+        // Nothing further needs it, and it should not sit in the circuit's
+        // memory for the rest of the session.
+        (_addPassword, _addPasswordAgain) = ("", "");
+
+        return repoPath;
+    }
+
+    private void AskDetach(RepoRow row)
+    {
+        _message = null;
+        _detachTarget = row;
+    }
+
+    private async Task DetachRepositoryAsync()
+    {
+        if (_detachTarget is null)
+        {
+            return;
+        }
+
+        var row = _detachTarget;
+        _detachTarget = null;
+
+        // Unregister only. Deleting a repository means deleting every backup in
+        // it, and that is never a side effect of a panel button.
+        var removed = Repos.Remove(row.RepoPath);
+
+        _messageTone = removed ? SbBannerTone.Ok : SbBannerTone.Warn;
+        _message = removed
+            ? $"'{row.DisplayName}' bağlantısı kaldırıldı. Klasördeki yedeklere dokunulmadı."
+            : $"'{row.DisplayName}' zaten bağlı değildi.";
+
+        if (_selectedRow?.RepoPath == row.RepoPath)
+        {
+            CloseDrawer();
+        }
+
+        await LoadRowsAsync();
     }
 
     private async Task OpenDrawerAsync(RepoRow row)

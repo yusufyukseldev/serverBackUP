@@ -16,6 +16,7 @@ public sealed class NavMenuTests : BunitContext, IDisposable
     private const string Password = "correct horse battery staple";
 
     private readonly string _repoPath = Path.Combine(Path.GetTempPath(), "sb-ui-nav-repo-" + Guid.NewGuid().ToString("n"));
+    private readonly TestRepositoryRegistry _registry = new();
 
     public NavMenuTests()
     {
@@ -26,6 +27,8 @@ public sealed class NavMenuTests : BunitContext, IDisposable
     [Fact]
     public void Renders_a_link_for_every_top_level_page()
     {
+        Services.AddSingleton(_registry.Create());
+
         var cut = Render<NavMenu>();
 
         cut.Markup.Should().Contain("Genel bakış");
@@ -40,6 +43,8 @@ public sealed class NavMenuTests : BunitContext, IDisposable
     [Fact]
     public void Every_link_points_to_a_distinct_route()
     {
+        Services.AddSingleton(_registry.Create());
+
         var cut = Render<NavMenu>();
 
         var hrefs = cut.FindAll("a").Select(a => a.GetAttribute("href")).ToList();
@@ -59,7 +64,7 @@ public sealed class NavMenuTests : BunitContext, IDisposable
             await db.SaveChangesAsync();
         }
 
-        Services.AddSingleton(Options.Create(new ServerBackupOptions { Repositories = [_repoPath] }));
+        Services.AddSingleton(_registry.Create(_repoPath));
 
         var cut = Render<NavMenu>();
 
@@ -77,6 +82,7 @@ public sealed class NavMenuTests : BunitContext, IDisposable
             Directory.Delete(_repoPath, recursive: true);
         }
 
+        _registry.Dispose();
         base.Dispose();
     }
 }

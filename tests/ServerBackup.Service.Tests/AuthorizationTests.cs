@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using ServerBackup.Service.Scheduling;
 using Xunit;
 
 namespace ServerBackup.Service.Tests;
@@ -16,8 +17,11 @@ namespace ServerBackup.Service.Tests;
 /// Negotiate handshake. The real handshake was verified manually against a
 /// live Kestrel server with a real Windows account.
 /// </summary>
-public sealed class AuthorizationTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class AuthorizationTests : IClassFixture<WebApplicationFactory<Program>>, IDisposable
 {
+    private readonly string _stateDirectory =
+        Path.Combine(Path.GetTempPath(), "sb-auth-state-" + Guid.NewGuid().ToString("n"));
+
     private readonly WebApplicationFactory<Program> _factory;
 
     public AuthorizationTests(WebApplicationFactory<Program> factory)
@@ -25,6 +29,12 @@ public sealed class AuthorizationTests : IClassFixture<WebApplicationFactory<Pro
         _factory = factory.WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
+
+            // This boots the real Program, and RepositoryRegistry persists its
+            // list. Left at the default it would write into the machine's
+            // %ProgramData% — a test must never touch the operator's real state.
+            builder.UseSetting($"{ServerBackupOptions.SectionName}:DataDirectory", _stateDirectory);
+
             builder.ConfigureServices(services =>
             {
                 services.AddAuthentication(TestAuthHandler.SchemeName)
@@ -77,5 +87,13 @@ public sealed class AuthorizationTests : IClassFixture<WebApplicationFactory<Pro
         var response = await client.GetAsync(path);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, $"'{path}' must not be reachable anonymously");
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_stateDirectory))
+        {
+            Directory.Delete(_stateDirectory, recursive: true);
+        }
     }
 }

@@ -11,6 +11,7 @@ using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Retention;
 using ServerBackup.Engine.Scanning;
 using ServerBackup.Engine.Scheduling;
+using ServerBackup.Service.Storage;
 
 namespace ServerBackup.Service.Scheduling;
 
@@ -24,6 +25,7 @@ namespace ServerBackup.Service.Scheduling;
 /// </summary>
 public sealed class BackupSchedulerService(
     IOptions<ServerBackupOptions> options,
+    RepositoryRegistry repositories,
     JobQueue queue,
     INotifier notifier,
     ILogger<BackupSchedulerService> logger) : BackgroundService
@@ -57,7 +59,9 @@ public sealed class BackupSchedulerService(
 
     private async Task PollAsync(CancellationToken ct)
     {
-        foreach (var repoPath in options.Value.Repositories)
+        // Read per poll, not once at startup: a repository attached from the
+        // panel has to start being scheduled without restarting the service.
+        foreach (var repoPath in repositories.Paths)
         {
             try
             {

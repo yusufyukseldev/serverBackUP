@@ -10,7 +10,7 @@
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
 @implements IDisposable
-@inject IOptions<ServerBackupOptions> Options
+@inject RepositoryRegistry Repos
 
 <PageHeader Title="Geri yükleme" />
 
@@ -38,7 +38,7 @@
                         <SbField Label="Depo" For="f-res-repo">
                             <select class="sb-select" id="f-res-repo" @bind="_repoPath" @bind:after="OnRepoChangedAsync">
                                 <option value="">— depo seçin —</option>
-                                @foreach (var path in Options.Value.Repositories)
+                                @foreach (var path in Repos.Paths)
                                 {
                                     <option value="@path">@RepoNaming.DisplayName(path)</option>
                                 }
@@ -399,7 +399,7 @@
     /// </summary>
     protected override async Task OnInitializedAsync()
     {
-        if (string.IsNullOrEmpty(RepoQuery) || !Options.Value.Repositories.Contains(RepoQuery))
+        if (string.IsNullOrEmpty(RepoQuery) || !Repos.Paths.Contains(RepoQuery))
         {
             return;
         }

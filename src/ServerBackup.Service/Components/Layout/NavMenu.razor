@@ -5,7 +5,7 @@
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
 @implements IDisposable
-@inject IOptions<ServerBackupOptions> Options
+@inject RepositoryRegistry Repos
 
 <nav class="sb-navroot" aria-label="Ana gezinme">
 <div class="sb-brand">ServerBackup</div>
@@ -85,7 +85,7 @@
         var activeCount = 0;
         var failedCount = 0;
 
-        foreach (var repoPath in Options.Value.Repositories)
+        foreach (var repoPath in Repos.Paths)
         {
             var dbPath = Path.Combine(repoPath, "catalog.db");
             if (!File.Exists(dbPath))

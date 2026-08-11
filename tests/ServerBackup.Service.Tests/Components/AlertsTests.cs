@@ -17,11 +17,12 @@ public sealed class AlertsTests : BunitContext, IDisposable
     private const string Password = "correct horse battery staple";
 
     private readonly string _repoPath = Path.Combine(Path.GetTempPath(), "sb-ui-alerts-repo-" + Guid.NewGuid().ToString("n"));
+    private readonly TestRepositoryRegistry _registry = new();
 
     [Fact]
     public void Shows_no_open_alerts_message_when_no_repositories_are_configured()
     {
-        Services.AddSingleton(Options.Create(new ServerBackupOptions { Repositories = [] }));
+        Services.AddSingleton(_registry.Create());
 
         var cut = Render<Alerts>();
 
@@ -40,7 +41,7 @@ public sealed class AlertsTests : BunitContext, IDisposable
             await db.SaveChangesAsync();
         }
 
-        Services.AddSingleton(Options.Create(new ServerBackupOptions { Repositories = [_repoPath] }));
+        Services.AddSingleton(_registry.Create(_repoPath));
 
         var cut = Render<Alerts>();
         cut.WaitForAssertion(() => cut.Markup.Should().Contain("failed-1"), TimeSpan.FromSeconds(5));
@@ -56,6 +57,7 @@ public sealed class AlertsTests : BunitContext, IDisposable
             Directory.Delete(_repoPath, recursive: true);
         }
 
+        _registry.Dispose();
         base.Dispose();
     }
 }

@@ -10,6 +10,7 @@ using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Scanning;
 using ServerBackup.Engine.Scheduling;
 using ServerBackup.Service.Scheduling;
+using ServerBackup.Service.Storage;
 using Xunit;
 
 namespace ServerBackup.Integration.Tests;
@@ -20,6 +21,7 @@ public sealed class BackupSchedulerServiceTests : IDisposable
 
     private readonly string _repoPath = Path.Combine(Path.GetTempPath(), "sb-svc-repo-" + Guid.NewGuid().ToString("n"));
     private readonly string _sourcePath = Path.Combine(Path.GetTempPath(), "sb-svc-src-" + Guid.NewGuid().ToString("n"));
+    private readonly string _statePath = Path.Combine(Path.GetTempPath(), "sb-svc-state-" + Guid.NewGuid().ToString("n"));
 
     public BackupSchedulerServiceTests() => Directory.CreateDirectory(_sourcePath);
 
@@ -46,14 +48,20 @@ public sealed class BackupSchedulerServiceTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var options = Options.Create(new ServerBackupOptions
+        var settings = new ServerBackupOptions
         {
             Repositories = [_repoPath],
+            DataDirectory = _statePath,
             PollIntervalSeconds = 1,
             MaxConcurrentJobs = 1,
-        });
+        };
         var queue = new JobQueue();
-        var service = new BackupSchedulerService(options, queue, new NoOpNotifier(), NullLogger<BackupSchedulerService>.Instance);
+        var service = new BackupSchedulerService(
+            Options.Create(settings),
+            new RepositoryRegistry(settings),
+            queue,
+            new NoOpNotifier(),
+            NullLogger<BackupSchedulerService>.Instance);
 
         await service.StartAsync(CancellationToken.None);
         try
@@ -102,7 +110,7 @@ public sealed class BackupSchedulerServiceTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var dir in new[] { _repoPath, _sourcePath })
+        foreach (var dir in new[] { _repoPath, _sourcePath, _statePath })
         {
             if (Directory.Exists(dir))
             {

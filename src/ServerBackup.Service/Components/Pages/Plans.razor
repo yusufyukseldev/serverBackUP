@@ -9,14 +9,14 @@
 @using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
-@inject IOptions<ServerBackupOptions> Options
+@inject RepositoryRegistry Repos
 @inject JobQueue Queue
 
 <PageHeader Title="Planlar">
     <Actions>
         <SbButton Variant="SbButtonVariant.Primary" Icon="plus" OnClick="OpenCreateDialog"
-                  Disabled="@(Options.Value.Repositories.Count == 0)"
-                  DisabledReason="@(Options.Value.Repositories.Count == 0 ? "Önce bir depo yapılandırın" : null)">
+                  Disabled="@(Repos.Paths.Count == 0)"
+                  DisabledReason="@(Repos.Paths.Count == 0 ? "Önce bir depo yapılandırın" : null)">
             Yeni plan
         </SbButton>
     </Actions>
@@ -37,7 +37,7 @@
             else if (_plans.Count == 0)
             {
                 <SbEmptyState Message="Henüz plan yok. Bir plan, hangi yolların hangi sıklıkta yedekleneceğini tanımlar."
-                              ActionText="@(Options.Value.Repositories.Count == 0 ? null : "Yeni plan")"
+                              ActionText="@(Repos.Paths.Count == 0 ? null : "Yeni plan")"
                               OnAction="OpenCreateDialog" />
             }
             else
@@ -127,7 +127,7 @@
             <SbField Label="Depo" For="f-plan-repo"
                      Hint="@(_editingPlanId is null ? null : "Var olan bir planın deposu değiştirilemez — snapshot'ları bu depoda duruyor.")">
                 <select class="sb-select" id="f-plan-repo" @bind="_form.RepoPath" disabled="@(_editingPlanId is not null)">
-                    @foreach (var repoPath in Options.Value.Repositories)
+                    @foreach (var repoPath in Repos.Paths)
                     {
                         <option value="@repoPath">@RepoNaming.DisplayName(repoPath) — @repoPath</option>
                     }
@@ -377,7 +377,7 @@
 
     private void OpenCreateDialog()
     {
-        _form = new PlanForm { RepoPath = Options.Value.Repositories.FirstOrDefault() ?? "" };
+        _form = new PlanForm { RepoPath = Repos.Paths.FirstOrDefault() ?? "" };
         _formError = null;
         _tab = "kaynak";
         _editingPlanId = null;
@@ -587,7 +587,7 @@
     {
         var rows = new List<PlanRow>();
 
-        foreach (var repoPath in Options.Value.Repositories)
+        foreach (var repoPath in Repos.Paths)
         {
             var dbPath = Path.Combine(repoPath, "catalog.db");
             if (!File.Exists(dbPath))
