@@ -7,6 +7,7 @@
 @implements IDisposable
 @inject IOptions<ServerBackupOptions> Options
 
+<nav class="sb-navroot" aria-label="Ana gezinme">
 <div class="sb-brand">ServerBackup</div>
 
 <div class="sb-navgroup">GENEL</div>
@@ -23,33 +24,36 @@
 <div class="sb-navgroup">KAYITLAR</div>
 <NavLink class="sb-nav" href="jobs">
     <SbIcon Name="hist" /> İş geçmişi
-    <span class="sb-nav-count">@_activeJobCount</span>
+    <span class="sb-nav-count" aria-label="@($"{_activeJobCount} etkin iş")">@_activeJobCount</span>
 </NavLink>
 <NavLink class="sb-nav" href="alerts">
     <SbIcon Name="alert" /> Uyarılar
-    <span class="sb-nav-count @(_failedJobCount > 0 ? "sb-nav-count--err" : "")">@_failedJobCount</span>
+    <span class="sb-nav-count @(_failedJobCount > 0 ? "sb-nav-count--err" : "")" aria-label="@($"{_failedJobCount} açık uyarı")">@_failedJobCount</span>
 </NavLink>
 
-<div class="sb-navgroup">DEPOLAR</div>
+</nav>
+
+<div class="sb-navgroup" id="nav-repos">DEPOLAR</div>
+<div role="list" aria-labelledby="nav-repos">
 @foreach (var repo in _repos)
 {
-    <div class="sb-repo" title="@repo.RepoPath">
-        <span class="sb-status sb-status--@repo.StatusClass"><i></i></span>
+    <div class="sb-repo" role="listitem" title="@repo.RepoPath">
+        <span class="sb-status sb-status--@repo.StatusClass"><i></i><span class="sb-sr-only">@repo.StatusText</span></span>
         <span class="sb-repo-n">@repo.DisplayName</span>
-        <span class="sb-repo-d @(repo.DiskPercent is { } dp && (DiskUsage.IsWarning(dp) || DiskUsage.IsDanger(dp)) ? "is-warn" : "")">@(repo.DiskPercent is { } p ? $"%{p}" : "—")</span>
+        <span class="sb-repo-d @(repo.DiskPercent is { } dp && (DiskUsage.IsWarning(dp) || DiskUsage.IsDanger(dp)) ? "is-warn" : "")"
+               aria-label="@(repo.DiskPercent is { } ap ? $"Disk %{ap} dolu" : "Disk doluluğu bilinmiyor")">@(repo.DiskPercent is { } p ? $"%{p}" : "—")</span>
     </div>
 }
+</div>
 
 <div class="sb-side-foot">
-    <button type="button" class="sb-nav" disabled title="Henüz eklenmedi">
-        <SbIcon Name="gear" /> Ayarlar
-    </button>
+    <SbThemeSwitch />
     <div class="sb-side-user">@(_userName ?? "—")</div>
     <div class="sb-side-ver">Sürüm @_version</div>
 </div>
 
 @code {
-    private sealed record RepoNavInfo(string DisplayName, string RepoPath, string StatusClass, int? DiskPercent);
+    private sealed record RepoNavInfo(string DisplayName, string RepoPath, string StatusClass, string StatusText, int? DiskPercent);
 
     private List<RepoNavInfo> _repos = [];
     private int _activeJobCount;
@@ -86,7 +90,7 @@
             var dbPath = Path.Combine(repoPath, "catalog.db");
             if (!File.Exists(dbPath))
             {
-                repos.Add(new RepoNavInfo(RepoNaming.DisplayName(repoPath), repoPath, "muted", DiskUsage.GetUsedPercent(repoPath)));
+                repos.Add(new RepoNavInfo(RepoNaming.DisplayName(repoPath), repoPath, "muted", "Durum bilinmiyor", DiskUsage.GetUsedPercent(repoPath)));
                 continue;
             }
 
@@ -97,7 +101,10 @@
             activeCount += jobs.Count(j => j.Status is "Running" or "Pending");
             failedCount += jobs.Count(j => j.Status == "Failed");
 
-            repos.Add(new RepoNavInfo(RepoNaming.DisplayName(repoPath), repoPath, StatusClass(lastJob?.Status), DiskUsage.GetUsedPercent(repoPath)));
+            repos.Add(new RepoNavInfo(
+                RepoNaming.DisplayName(repoPath), repoPath,
+                StatusClass(lastJob?.Status), StatusText(lastJob?.Status),
+                DiskUsage.GetUsedPercent(repoPath)));
         }
 
         _repos = repos;
@@ -105,6 +112,16 @@
         _failedJobCount = failedCount;
         StateHasChanged();
     }
+
+    /// <summary>Colour alone must never carry meaning (design-system.md §11) — the dot gets a screen-reader word.</summary>
+    private static string StatusText(string? status) => status switch
+    {
+        "Succeeded" => "Son yedekleme başarılı",
+        "Running" => "Yedekleme sürüyor",
+        "Pending" => "Yedekleme bekliyor",
+        "Failed" => "Son yedekleme başarısız",
+        _ => "Durum bilinmiyor",
+    };
 
     private static string StatusClass(string? status) => status switch
     {

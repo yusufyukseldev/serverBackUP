@@ -1,0 +1,137 @@
+@using ServerBackup.Service.Formatting
+@using ServerBackup.Service.Storage
+
+<div class="sb-picker">
+    <div class="sb-picker-chosen">
+        @if (Paths.Count == 0)
+        {
+            <p class="sb-hint">Henüz kaynak yol seçilmedi. Aşağıdan bir disk veya klasör ekleyin.</p>
+        }
+        else
+        {
+            <ul class="sb-picker-list">
+                @foreach (var path in Paths)
+                {
+                    <li>
+                        <SbIcon Name="@(IsDriveRoot(path) ? "hdd" : "folder")" Small="true" />
+                        <span class="sb-picker-path" title="@path">@path</span>
+                        @if (IsDriveRoot(path))
+                        {
+                            <span class="sb-picker-tag">tüm disk</span>
+                        }
+                        <button type="button" class="sb-iconbtn" title="@($"{path} yolunu kaldır")"
+                                aria-label="@($"{path} yolunu kaldır")" @onclick="() => RemoveAsync(path)">
+                            <SbIcon Name="x" Small="true" />
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    <div class="sb-picker-browser">
+        <div class="sb-picker-drives" role="group" aria-label="Diskler">
+            @foreach (var drive in _drives)
+            {
+                <button type="button"
+                        class="sb-btn sb-btn--sm @(IsCurrentDrive(drive.RootPath) ? "is-active" : "")"
+                        aria-pressed="@(IsCurrentDrive(drive.RootPath) ? "true" : "false")"
+                        title="@($"{drive.Label} — {Fmt.Bytes(drive.FreeBytes)} boş / {Fmt.Bytes(drive.TotalBytes)}")"
+                        @onclick="() => Browse(drive.RootPath)">
+                    <SbIcon Name="hdd" Small="true" /> @drive.Label
+                </button>
+            }
+        </div>
+
+        @if (_current is not null)
+        {
+            <nav class="sb-picker-crumbs" aria-label="Klasör yolu">
+                @foreach (var ancestor in FileSystemBrowser.GetAncestors(_current))
+                {
+                    <button type="button" class="sb-crumb" @onclick="() => Browse(ancestor)">
+                        @(Path.GetFileName(ancestor.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } n ? n : ancestor)
+                    </button>
+                }
+            </nav>
+
+            <div class="sb-picker-actions">
+                <SbButton Size="SbButtonSize.Sm" OnClick="() => AddAsync(_current)"
+                          AriaLabel="@($"{_current} yolunu kaynak yollara ekle")"
+                          Disabled="@Paths.Contains(_current)"
+                          DisabledReason="@(Paths.Contains(_current) ? "Bu yol zaten listede" : null)">
+                    @(IsDriveRoot(_current) ? "Bu diskin tamamını ekle" : "Bu klasörü ekle")
+                </SbButton>
+                <span class="sb-hint">@_current</span>
+            </div>
+
+            <ul class="sb-picker-list sb-picker-list--browse">
+                @if (_children.Count == 0)
+                {
+                    <li class="sb-hint">Bu klasörde alt klasör yok veya okuma izni bulunmuyor.</li>
+                }
+                else
+                {
+                    @foreach (var child in _children)
+                    {
+                        <li>
+                            <button type="button" class="sb-picker-open"
+                                    aria-label="@($"{Path.GetFileName(child)} klasörünü aç")"
+                                    @onclick="() => Browse(child)">
+                                <SbIcon Name="folder" Small="true" />
+                                <span>@Path.GetFileName(child)</span>
+                            </button>
+                            @* Her satırda çıplak "Ekle" ekran okuyucuda ayırt edilemez — ad klasörü söylemeli. *@
+                            <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Subtle"
+                                      AriaLabel="@($"{Path.GetFileName(child)} klasörünü kaynak yollara ekle")"
+                                      OnClick="() => AddAsync(child)"
+                                      Disabled="@Paths.Contains(child)"
+                                      DisabledReason="@(Paths.Contains(child) ? "Bu yol zaten listede" : null)">
+                                Ekle
+                            </SbButton>
+                        </li>
+                    }
+                }
+            </ul>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>Chosen source paths. Owned by the parent; this component never mutates the list in place.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<string> Paths { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public EventCallback<IReadOnlyList<string>> PathsChanged { get; set; }
+
+    private IReadOnlyList<FileSystemBrowser.DriveItem> _drives = [];
+    private IReadOnlyList<string> _children = [];
+    private string? _current;
+
+    protected override void OnInitialized()
+    {
+        _drives = FileSystemBrowser.GetFixedDrives();
+        if (_drives.Count > 0)
+        {
+            Browse(_drives[0].RootPath);
+        }
+    }
+
+    private void Browse(string path)
+    {
+        _current = path;
+        _children = FileSystemBrowser.GetSubdirectories(path);
+    }
+
+    private Task AddAsync(string path) =>
+        Paths.Contains(path) ? Task.CompletedTask : PathsChanged.InvokeAsync([.. Paths, path]);
+
+    private Task RemoveAsync(string path) =>
+        PathsChanged.InvokeAsync(Paths.Where(p => p != path).ToList());
+
+    private bool IsCurrentDrive(string rootPath) =>
+        _current is not null && string.Equals(Path.GetPathRoot(_current), rootPath, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDriveRoot(string path) =>
+        string.Equals(Path.GetPathRoot(path), path, StringComparison.OrdinalIgnoreCase);
+}

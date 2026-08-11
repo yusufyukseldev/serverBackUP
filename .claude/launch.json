@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ServerBackup.Service",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/ServerBackup.Service"],
+      "port": 5000
+    }
+  ]
+}

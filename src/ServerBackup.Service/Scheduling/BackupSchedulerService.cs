@@ -179,8 +179,11 @@ public sealed class BackupSchedulerService(
                 // Unattended runs have no human watching, so anomaly
                 // detection defaults to aborting rather than just warning —
                 // see plan Faz 11.
+                BackupProgress? lastProgress = null;
                 var engine = new BackupEngine(
                     new LocalSourceProvider(), scheduled.RepoPath, masterKey,
+                    filter: new ScanFilter(sourcePaths[0]),
+                    progress: new Progress<BackupProgress>(p => lastProgress = p),
                     anomalyPolicy: new AnomalyPolicy(AbortOnDetection: true));
                 var snapshotId = await engine.RunAsync(sourcePaths, parentSnapshotId, plan.PlanId, stoppingToken);
 
@@ -194,14 +197,17 @@ public sealed class BackupSchedulerService(
                     }
                 }
 
+                var skipped = lastProgress?.EntriesSkipped ?? 0;
                 job.Status = JobStatus.Succeeded;
                 job.FinishedAtUtc = DateTimeOffset.UtcNow;
                 db.JobLogs.Add(new JobLogEntity
                 {
                     JobId = job.JobId,
                     TimestampUtc = DateTimeOffset.UtcNow,
-                    Level = "Information",
-                    Message = $"Snapshot {snapshotId} completed successfully.",
+                    Level = skipped > 0 ? "Warning" : "Information",
+                    Message = skipped > 0
+                        ? $"Snapshot {snapshotId} completed; {skipped} unreadable entries skipped."
+                        : $"Snapshot {snapshotId} completed successfully.",
                 });
             }
             finally

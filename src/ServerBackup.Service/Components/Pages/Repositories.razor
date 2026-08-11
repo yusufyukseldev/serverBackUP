@@ -45,7 +45,10 @@ else
         <tbody>
             @foreach (var row in _rows)
             {
-                <tr class="@(row.Exists ? "is-clickable" : "")" @onclick="() => OpenDrawerAsync(row)">
+                <tr class="@(row.Exists ? "is-clickable" : "")"
+                    tabindex="@(row.Exists ? 0 : -1)"
+                    @onclick="() => OpenDrawerAsync(row)"
+                    @onkeydown="e => OnRowKeyDownAsync(e, row)">
                     <td class="sb-name">@row.DisplayName</td>
                     <td class="path" title="@row.RepoPath">@Fmt.TruncatePath(row.RepoPath, 30)</td>
                     <td>
@@ -144,14 +147,14 @@ else
 <SbDialog Title="Yedek al" Description="@(_selectedRow?.RepoPath)" Open="_backupDialogOpen" OnClose="CloseBackupDialog" Size="SbDialogSize.Md">
     <ChildContent>
         <div class="sb-stack">
-            <SbField Label="Kaynak Yollar (virgülle ayrılmış)">
-                <input class="sb-input" @bind="_backupSourcePaths" placeholder="C:\Veri, D:\Projeler" />
+            <SbField Label="Kaynak yollar" Group="true" Hint="Bir diski seçmek o diskin tamamını yedekler; okunamayan sistem klasörleri atlanır.">
+                <SbPathPicker Paths="_backupPaths" PathsChanged="p => _backupPaths = p" />
             </SbField>
 
             @if (_selectedRow is not null && !_selectedRow.UnattendedEnabled)
             {
-                <SbField Label="Parola">
-                    <input class="sb-input" type="password" @bind="_backupPassword" />
+                <SbField Label="Parola" For="f-backup-pwd">
+                    <input class="sb-input" type="password" id="f-backup-pwd" @bind="_backupPassword" />
                 </SbField>
             }
 
@@ -176,8 +179,8 @@ else
 <SbDialog Title="Depoyu doğrula" Description="@(_selectedRow?.RepoPath)" Open="_verifyDialogOpen" OnClose="CloseVerifyDialog" Size="SbDialogSize.Md">
     <ChildContent>
         <div class="sb-stack">
-            <SbField Label="Doğrulama seviyesi">
-                <select class="sb-select" @bind="_verifyLevel">
+            <SbField Label="Doğrulama seviyesi" For="f-verify-level">
+                <select class="sb-select" id="f-verify-level" @bind="_verifyLevel">
                     <option value="Index">Hızlı — katalog tutarlılığı</option>
                     <option value="Packs">Pack bütünlüğü — SHA-256</option>
                     <option value="Full">Tam — her blob'u çöz ve doğrula</option>
@@ -186,8 +189,8 @@ else
 
             @if (_selectedRow is not null && !_selectedRow.UnattendedEnabled)
             {
-                <SbField Label="Parola">
-                    <input class="sb-input" type="password" @bind="_verifyPassword" />
+                <SbField Label="Parola" For="f-verify-pwd">
+                    <input class="sb-input" type="password" id="f-verify-pwd" @bind="_verifyPassword" />
                 </SbField>
             }
 
@@ -258,7 +261,7 @@ else
     private PlanEntity? _drawerSinglePlan;
 
     private bool _backupDialogOpen;
-    private string _backupSourcePaths = "";
+    private IReadOnlyList<string> _backupPaths = [];
     private string _backupPassword = "";
     private bool _backupRunning;
     private string? _backupMessage;
@@ -332,6 +335,14 @@ else
         _drawerSinglePlan = plans.Count == 1 ? plans[0] : null;
     }
 
+    private async Task OnRowKeyDownAsync(KeyboardEventArgs e, RepoRow row)
+    {
+        if (e.Key is "Enter" or " ")
+        {
+            await OpenDrawerAsync(row);
+        }
+    }
+
     private void CloseDrawer()
     {
         _selectedRow = null;
@@ -341,7 +352,7 @@ else
 
     private void OpenBackupDialog()
     {
-        _backupSourcePaths = "";
+        _backupPaths = [];
         _backupPassword = "";
         _backupMessage = null;
         _backupDialogOpen = true;
@@ -358,10 +369,10 @@ else
 
         _backupMessage = null;
 
-        var sourcePaths = _backupSourcePaths.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var sourcePaths = _backupPaths.ToArray();
         if (sourcePaths.Length == 0)
         {
-            _backupMessage = "En az bir kaynak yol girin.";
+            _backupMessage = "En az bir kaynak yol seçin.";
             return;
         }
 
@@ -390,10 +401,17 @@ else
                 .FirstOrDefault()
                 ?.SnapshotId;
 
-            var engine = new BackupEngine(new LocalSourceProvider(), repoPath, masterKey);
+            BackupProgress? lastProgress = null;
+            var engine = new BackupEngine(
+                new LocalSourceProvider(), repoPath, masterKey,
+                filter: new ScanFilter(sourcePaths[0]),
+                progress: new Progress<BackupProgress>(p => lastProgress = p));
             var snapshotId = await engine.RunAsync(sourcePaths, parentSnapshotId);
 
-            _backupMessage = $"Tamamlandı — snapshot {snapshotId}.";
+            var skipped = lastProgress?.EntriesSkipped ?? 0;
+            _backupMessage = skipped > 0
+                ? $"Tamamlandı — snapshot {snapshotId}. {skipped} öğe okunamadığı için atlandı."
+                : $"Tamamlandı — snapshot {snapshotId}.";
             _backupDialogOpen = false;
             await OnInitializedAsync();
         }

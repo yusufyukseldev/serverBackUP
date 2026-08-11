@@ -1,10 +1,13 @@
+@* design-system.md B10 — modal değil: arkadaki tablo okunur kalır, bu yüzden
+   aria-modal kullanılmaz. Esc kapatır (§11). *@
 @if (Open)
 {
-    <div class="sb-drawer">
+    <div class="sb-drawer" role="complementary" aria-labelledby="@TitleId"
+         @onkeydown="OnKeyDown" @ref="_drawer" tabindex="-1">
         <div class="sb-drawer-head">
-            <h3>@Title</h3>
+            <h3 id="@TitleId">@Title</h3>
             <div class="sp"></div>
-            <SbButton Variant="SbButtonVariant.Subtle" Icon="x" OnClick="OnClose" />
+            <SbButton Variant="SbButtonVariant.Subtle" Icon="x" AriaLabel="Paneli kapat" OnClick="OnClose" />
         </div>
         <div class="sb-drawer-body">
             @ChildContent
@@ -24,4 +27,28 @@
 
     [Parameter]
     public RenderFragment? ChildContent { get; set; }
+
+    private readonly string _uid = $"w{Guid.NewGuid():n}"[..9];
+    private ElementReference _drawer;
+    private bool _wasOpen;
+
+    private string TitleId => $"{_uid}-t";
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await OnClose.InvokeAsync();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Open && !_wasOpen)
+        {
+            await _drawer.FocusAsync();
+        }
+
+        _wasOpen = Open;
+    }
 }

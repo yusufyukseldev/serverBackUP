@@ -13,6 +13,7 @@ BenchmarkDotNet.Artifacts/
 .vs/
 .vscode/
 *.dotCover
+.claude/settings.local.json
 
 ## Backup repositories created during local testing — never commit real backup data
 **/TestData/

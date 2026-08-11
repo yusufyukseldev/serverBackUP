@@ -1,19 +1,42 @@
+@* design-system.md §11 — a label that is not bound to its control is invisible to
+   a screen reader. Single controls use `for`/`id`; composite fields (radio
+   groups, checkbox rows, the path picker) cannot use `for` at all, so they get
+   role="group" + aria-labelledby instead. *@
 <div class="sb-field @WidthClass">
-    <label>@Label</label>
-    @ChildContent
+    @if (Group)
+    {
+        <span class="sb-field-label" id="@LabelId">@Label</span>
+        <div role="group" aria-labelledby="@LabelId" aria-describedby="@DescribedBy">
+            @ChildContent
+        </div>
+    }
+    else
+    {
+        <label class="sb-field-label" for="@For">@Label</label>
+        @ChildContent
+    }
+
     @if (Error is not null)
     {
-        <span class="sb-hint sb-hint--error">@Error</span>
+        <span class="sb-hint sb-hint--error" id="@ErrorId" role="alert">@Error</span>
     }
     else if (Hint is not null)
     {
-        <span class="sb-hint">@Hint</span>
+        <span class="sb-hint" id="@HintId">@Hint</span>
     }
 </div>
 
 @code {
     [Parameter, EditorRequired]
     public string Label { get; set; } = "";
+
+    /// <summary>Id of the single control this field labels. Ignored when <see cref="Group"/> is set.</summary>
+    [Parameter]
+    public string? For { get; set; }
+
+    /// <summary>Set when the field wraps several controls rather than one.</summary>
+    [Parameter]
+    public bool Group { get; set; }
 
     [Parameter]
     public string? Hint { get; set; }
@@ -26,6 +49,14 @@
 
     [Parameter]
     public RenderFragment? ChildContent { get; set; }
+
+    private readonly string _uid = $"f{Guid.NewGuid():n}"[..9];
+
+    private string LabelId => $"{_uid}-l";
+    private string HintId => $"{_uid}-h";
+    private string ErrorId => $"{_uid}-e";
+
+    private string? DescribedBy => Error is not null ? ErrorId : Hint is not null ? HintId : null;
 
     private string WidthClass => Width switch
     {

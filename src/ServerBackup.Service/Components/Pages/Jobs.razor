@@ -3,64 +3,174 @@
 @using Microsoft.Extensions.Options
 @using ServerBackup.Data
 @using ServerBackup.Data.Entities
+@using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
+@using ServerBackup.Service.Storage
 @implements IDisposable
 @inject IOptions<ServerBackupOptions> Options
 
-<div class="sb-content">
-<h1>İş Geçmişi</h1>
+<PageHeader Title="İş geçmişi">
+    <Actions>
+        <span class="sb-hint">@(_autoRefresh ? "5 sn'de bir yenileniyor" : "Otomatik yenileme duraklatıldı")</span>
+        <SbButton Size="SbButtonSize.Sm" Icon="@(_autoRefresh ? "pause" : "refresh")" OnClick="ToggleAutoRefresh">
+            @(_autoRefresh ? "Duraklat" : "Sürdür")
+        </SbButton>
+    </Actions>
+</PageHeader>
 
-@if (_jobs is null)
-{
-    <p>Yükleniyor...</p>
-}
-else if (_jobs.Count == 0)
-{
-    <p>Henüz iş kaydı yok.</p>
-}
-else
-{
-    <table>
-        <thead>
-            <tr>
-                <th>Depo</th>
-                <th>İş</th>
-                <th>Durum</th>
-                <th>Başlangıç</th>
-                <th>Bitiş</th>
-                <th>Hata</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var (repoPath, job) in _jobs)
+<div class="sb-content">
+    <div class="sb-stack">
+        <div class="sb-row sb-row--wrap">
+            <SbField Label="Depo" For="f-jobs-repo" Width="SbFieldWidth.Md">
+                <select class="sb-select" id="f-jobs-repo" @bind="_repoFilter">
+                    <option value="">Tüm depolar</option>
+                    @foreach (var repoPath in Options.Value.Repositories)
+                    {
+                        <option value="@repoPath">@RepoNaming.DisplayName(repoPath)</option>
+                    }
+                </select>
+            </SbField>
+            <SbField Label="Durum" For="f-jobs-status" Width="SbFieldWidth.Sm">
+                <select class="sb-select" id="f-jobs-status" @bind="_statusFilter">
+                    <option value="">Tüm durumlar</option>
+                    <option value="Succeeded">Başarılı</option>
+                    <option value="Running">Sürüyor</option>
+                    <option value="Pending">Bekliyor</option>
+                    <option value="Failed">Hata</option>
+                    <option value="Cancelled">İptal edildi</option>
+                </select>
+            </SbField>
+        </div>
+
+        <SbCard Title="@($"{FilteredJobs.Count} iş")" Flush="true">
+            @if (_jobs is null)
             {
-                <tr>
-                    <td>@repoPath</td>
-                    <td>@job.JobId</td>
-                    <td><SbStatusChip Status="@job.Status" /></td>
-                    <td>@(job.StartedAtUtc?.ToString("u") ?? "-")</td>
-                    <td>@(job.FinishedAtUtc?.ToString("u") ?? "-")</td>
-                    <td>@(job.ErrorMessage ?? "-")</td>
-                </tr>
+                <div class="sb-card-body"><SbSkeleton /></div>
             }
-        </tbody>
-    </table>
-}
+            else if (FilteredJobs.Count == 0)
+            {
+                <SbEmptyState Message="@(_jobs.Count == 0 ? "Henüz iş kaydı yok. Bir plan çalıştığında burada görünür." : "Bu filtreye uyan iş yok.")" />
+            }
+            else
+            {
+                <div class="sb-table-wrap" aria-live="polite">
+                    <table class="sb-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Durum</th>
+                                <th scope="col">Depo</th>
+                                <th scope="col">Tür</th>
+                                <th scope="col">İş</th>
+                                <th scope="col">Başlangıç</th>
+                                <th scope="col" class="r">Süre</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in FilteredJobs)
+                            {
+                                <tr class="is-clickable @(_selected?.Job.JobId == row.Job.JobId ? "is-active" : "")"
+                                    tabindex="0"
+                                    @onclick="() => Select(row)"
+                                    @onkeydown="e => OnRowKeyDown(e, row)">
+                                    <td><SbStatusChip Status="@row.Job.Status" /></td>
+                                    <td class="sb-name">@RepoNaming.DisplayName(row.RepoPath)</td>
+                                    <td>@KindText(row.Job.Kind)</td>
+                                    <td class="id" title="@row.Job.JobId">@row.Job.JobId[..8]</td>
+                                    <td class="num">@(row.Job.StartedAtUtc is { } s ? Fmt.DateTime(s) : "—")</td>
+                                    <td class="r num">@DurationText(row.Job)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </SbCard>
+    </div>
 </div>
 
+<SbDrawer Title="İş ayrıntısı" Open="@(_selected is not null)" OnClose="() => _selected = null">
+    @if (_selected is not null)
+    {
+        <dl class="sb-dl">
+            <dt>Durum</dt><dd><SbStatusChip Status="@_selected.Job.Status" /></dd>
+            <dt>İş kimliği</dt><dd class="mono">@_selected.Job.JobId</dd>
+            <dt>Tür</dt><dd>@KindText(_selected.Job.Kind)</dd>
+            <dt>Depo</dt><dd>@RepoNaming.DisplayName(_selected.RepoPath)</dd>
+            <dt>Yol</dt><dd class="mono">@_selected.RepoPath</dd>
+            <dt>Başlangıç</dt><dd>@(_selected.Job.StartedAtUtc is { } s ? Fmt.DateTime(s) : "—")</dd>
+            <dt>Bitiş</dt><dd>@(_selected.Job.FinishedAtUtc is { } f ? Fmt.DateTime(f) : "—")</dd>
+            <dt>Süre</dt><dd>@DurationText(_selected.Job)</dd>
+        </dl>
+
+        @if (_selected.Job.ErrorMessage is { } error)
+        {
+            <SbBanner Tone="SbBannerTone.Err" Icon="alert"
+                      Title="Bu iş tamamlanamadı"
+                      Body="@FriendlyError(error)" />
+            <details>
+                <summary class="sb-hint">Ayrıntılar</summary>
+                <div class="sb-log"><div>@error</div></div>
+            </details>
+        }
+
+        @if (_selectedLogs.Count > 0)
+        {
+            <div>
+                <div class="sb-fs-title">Kayıtlar</div>
+                <div class="sb-log">
+                    @foreach (var log in _selectedLogs)
+                    {
+                        <div class="@LogClass(log.Level)"><time>@Fmt.DateTime(log.TimestampUtc)</time> @log.Message</div>
+                    }
+                </div>
+            </div>
+        }
+    }
+</SbDrawer>
+
 @code {
-    private List<(string RepoPath, JobEntity Job)>? _jobs;
+    private sealed record JobRow(string RepoPath, JobEntity Job);
+
+    private List<JobRow>? _jobs;
+    private JobRow? _selected;
+    private List<JobLogEntity> _selectedLogs = [];
+    private string _repoFilter = "";
+    private string _statusFilter = "";
+    private bool _autoRefresh = true;
     private Timer? _timer;
+
+    private List<JobRow> FilteredJobs => (_jobs ?? [])
+        .Where(j => _repoFilter.Length == 0 || j.RepoPath == _repoFilter)
+        .Where(j => _statusFilter.Length == 0 || j.Job.Status == _statusFilter)
+        .ToList();
 
     protected override async Task OnInitializedAsync()
     {
         await RefreshAsync();
+        StartTimer();
+    }
+
+    private void StartTimer() =>
         _timer = new Timer(async _ => await InvokeAsync(RefreshAsync), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+
+    /// <summary>design-system.md §12.4 — silent auto-refresh is replaced by visible, stoppable behaviour.</summary>
+    private void ToggleAutoRefresh()
+    {
+        _autoRefresh = !_autoRefresh;
+        if (_autoRefresh)
+        {
+            StartTimer();
+        }
+        else
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
     }
 
     private async Task RefreshAsync()
     {
-        var jobs = new List<(string, JobEntity)>();
+        var jobs = new List<JobRow>();
 
         foreach (var repoPath in Options.Value.Repositories)
         {
@@ -73,12 +183,84 @@ else
             await using var db = CatalogDbContextFactory.Create(dbPath);
             foreach (var job in await db.Jobs.AsNoTracking().ToListAsync())
             {
-                jobs.Add((repoPath, job));
+                jobs.Add(new JobRow(repoPath, job));
             }
         }
 
-        _jobs = jobs.OrderByDescending(j => j.Item2.StartedAtUtc).ToList();
+        _jobs = jobs.OrderByDescending(j => j.Job.StartedAtUtc).ToList();
         StateHasChanged();
+    }
+
+    private async Task Select(JobRow row)
+    {
+        _selected = row;
+        _selectedLogs = [];
+
+        var dbPath = Path.Combine(row.RepoPath, "catalog.db");
+        if (!File.Exists(dbPath))
+        {
+            return;
+        }
+
+        await using var db = CatalogDbContextFactory.Create(dbPath);
+        // SQLite cannot ORDER BY a DateTimeOffset column, so the sort happens
+        // in memory after materialising — same reason every other query here
+        // materialises before ordering.
+        _selectedLogs = (await db.JobLogs.AsNoTracking()
+                .Where(l => l.JobId == row.Job.JobId)
+                .ToListAsync())
+            .OrderBy(l => l.TimestampUtc)
+            .ToList();
+    }
+
+    private async Task OnRowKeyDown(KeyboardEventArgs e, JobRow row)
+    {
+        if (e.Key is "Enter" or " ")
+        {
+            await Select(row);
+        }
+    }
+
+    private static string KindText(string kind) => kind switch
+    {
+        "backup" => "Yedekleme",
+        "verify" => "Doğrulama",
+        "prune" => "Budama",
+        _ => kind,
+    };
+
+    private static string DurationText(JobEntity job) =>
+        job.StartedAtUtc is null || job.FinishedAtUtc is null
+            ? "—"
+            : Fmt.Duration(job.FinishedAtUtc.Value - job.StartedAtUtc.Value);
+
+    private static string LogClass(string level) => level switch
+    {
+        "Error" => "lv-err",
+        "Warning" => "lv-warn",
+        _ => "",
+    };
+
+    /// <summary>design-system.md §10.3 — [Ne oldu] + [Neden] + [Ne yapmalı]; the raw exception stays under "Ayrıntılar".</summary>
+    private static string FriendlyError(string raw)
+    {
+        if (raw.Contains("not enabled for unattended access", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Bu depo gözetimsiz erişime açık değil, bu yüzden servis parolayı çözemedi. "
+                + "Depolar sayfasından \"Parolasız erişimi aç\" işlemini uygulayın.";
+        }
+
+        if (raw.Contains("is denied", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Bir yol okunamadı. Servis hesabının kaynak yollara okuma izni olduğundan emin olun.";
+        }
+
+        if (raw.Contains("being used by another process", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Bir dosya başka bir işlem tarafından kilitliydi. VSS'i etkinleştirin veya bu yolu hariç tutun.";
+        }
+
+        return "Ayrıntılar aşağıda.";
     }
 
     public void Dispose() => _timer?.Dispose();

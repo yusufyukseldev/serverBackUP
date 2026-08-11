@@ -17,6 +17,12 @@ public sealed class NavMenuTests : BunitContext, IDisposable
 
     private readonly string _repoPath = Path.Combine(Path.GetTempPath(), "sb-ui-nav-repo-" + Guid.NewGuid().ToString("n"));
 
+    public NavMenuTests()
+    {
+        // The footer's theme switch reads the browser's stored preference.
+        JSInterop.Setup<string>("sbTheme.get").SetResult("system");
+    }
+
     [Fact]
     public void Renders_a_link_for_every_top_level_page()
     {
@@ -57,7 +63,10 @@ public sealed class NavMenuTests : BunitContext, IDisposable
 
         var cut = Render<NavMenu>();
 
-        cut.WaitForAssertion(() => cut.Markup.Should().Contain(Path.GetFileName(_repoPath)), TimeSpan.FromSeconds(5));
+        // Generous: the strip is filled by an async load, and when the whole
+        // suite runs in parallel a tight bound fails on scheduling, not on the
+        // behaviour under test.
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(Path.GetFileName(_repoPath)), TimeSpan.FromSeconds(30));
         cut.Markup.Should().Contain("sb-nav-count--err");
     }
 

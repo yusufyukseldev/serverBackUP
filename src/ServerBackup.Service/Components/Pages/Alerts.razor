@@ -3,52 +3,74 @@
 @using Microsoft.Extensions.Options
 @using ServerBackup.Data
 @using ServerBackup.Data.Entities
+@using ServerBackup.Engine.Scheduling
+@using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
+@using ServerBackup.Service.Storage
 @inject IOptions<ServerBackupOptions> Options
+@inject NavigationManager Nav
+
+<PageHeader Title="Uyarılar" />
 
 <div class="sb-content">
-<h1>Uyarılar</h1>
+    @if (_alerts is null)
+    {
+        <SbSkeleton />
+    }
+    else if (_alerts.Count == 0)
+    {
+        <SbCard Title="Durum" Flush="true">
+            <SbEmptyState Message="Açık uyarı yok. Başarısız bir iş oluştuğunda burada, kanıtıyla birlikte listelenir." />
+        </SbCard>
+    }
+    else
+    {
+        <div class="sb-stack">
+            <SbBanner Tone="SbBannerTone.Err" Icon="alert"
+                      Title="@($"{_alerts.Count} açık uyarı")"
+                      Body="Her uyarı, kaynağındaki işe ve deposuna bağlıdır. Sorunu giderdikten sonra planı yeniden çalıştırın." />
 
-@if (_failedJobs is null)
-{
-    <p>Yükleniyor...</p>
-}
-else if (_failedJobs.Count == 0)
-{
-    <p>Açık uyarı yok.</p>
-}
-else
-{
-    <table>
-        <thead>
-            <tr>
-                <th>Depo</th>
-                <th>İş</th>
-                <th>Başlangıç</th>
-                <th>Hata</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var (repoPath, job) in _failedJobs)
+            @foreach (var alert in _alerts)
             {
-                <tr>
-                    <td>@repoPath</td>
-                    <td>@job.JobId</td>
-                    <td>@(job.StartedAtUtc?.ToString("u") ?? "-")</td>
-                    <td>@(job.ErrorMessage ?? "-")</td>
-                </tr>
+                <SbCard Title="@alert.Title">
+                    <HeaderActions>
+                        <SbButton Size="SbButtonSize.Sm" OnClick="() => GoToJob(alert)">İşe git</SbButton>
+                    </HeaderActions>
+                    <ChildContent>
+                        <div class="sb-stack">
+                            <dl class="sb-dl">
+                                <dt>Depo</dt><dd>@RepoNaming.DisplayName(alert.RepoPath)</dd>
+                                <dt>Yol</dt><dd class="mono">@alert.RepoPath</dd>
+                                <dt>İş kimliği</dt><dd class="mono">@alert.JobId</dd>
+                                <dt>Zaman</dt>
+                                <dd title="@(alert.StartedAtUtc is { } s ? Fmt.DateTime(s) : "")">
+                                    @(alert.StartedAtUtc is { } st ? Fmt.Relative(st) : "—")
+                                </dd>
+                            </dl>
+
+                            <p>@alert.Explanation</p>
+
+                            <details>
+                                <summary class="sb-hint">Ayrıntılar</summary>
+                                <div class="sb-log"><div>@alert.RawError</div></div>
+                            </details>
+                        </div>
+                    </ChildContent>
+                </SbCard>
             }
-        </tbody>
-    </table>
-}
+        </div>
+    }
 </div>
 
 @code {
-    private List<(string RepoPath, JobEntity Job)>? _failedJobs;
+    private sealed record Alert(
+        string RepoPath, string JobId, string Title, string Explanation, string RawError, DateTimeOffset? StartedAtUtc);
+
+    private List<Alert>? _alerts;
 
     protected override async Task OnInitializedAsync()
     {
-        var jobs = new List<(string, JobEntity)>();
+        var alerts = new List<Alert>();
 
         foreach (var repoPath in Options.Value.Repositories)
         {
@@ -59,12 +81,49 @@ else
             }
 
             await using var db = CatalogDbContextFactory.Create(dbPath);
-            foreach (var job in await db.Jobs.AsNoTracking().Where(j => j.Status == "Failed").ToListAsync())
+            var failed = await db.Jobs.AsNoTracking()
+                .Where(j => j.Status == JobStatus.Failed)
+                .ToListAsync();
+
+            foreach (var job in failed)
             {
-                jobs.Add((repoPath, job));
+                var raw = job.ErrorMessage ?? "Bilinmeyen hata.";
+                alerts.Add(new Alert(repoPath, job.JobId, Title(raw), Explanation(raw), raw, job.StartedAtUtc));
             }
         }
 
-        _failedJobs = jobs.OrderByDescending(j => j.Item2.StartedAtUtc).ToList();
+        _alerts = alerts.OrderByDescending(a => a.StartedAtUtc).ToList();
     }
+
+    private void GoToJob(Alert alert) => Nav.NavigateTo("/jobs");
+
+    /// <summary>design-system.md §10.3 — the headline says what happened, never the raw exception.</summary>
+    private static string Title(string raw) => raw switch
+    {
+        var r when r.Contains("not enabled for unattended access", StringComparison.OrdinalIgnoreCase)
+            => "Depo gözetimsiz erişime açık değil",
+        var r when r.Contains("is denied", StringComparison.OrdinalIgnoreCase)
+            => "Bir yol okunamadı",
+        var r when r.Contains("being used by another process", StringComparison.OrdinalIgnoreCase)
+            => "Bir dosya kilitliydi",
+        var r when r.Contains("Anomaly", StringComparison.OrdinalIgnoreCase)
+            => "Olağandışı değişim tespit edildi",
+        _ => "Yedekleme tamamlanamadı",
+    };
+
+    private static string Explanation(string raw) => raw switch
+    {
+        var r when r.Contains("not enabled for unattended access", StringComparison.OrdinalIgnoreCase)
+            => "Zamanlanmış işler parolayı soramaz; depoyu açmak için makineye bağlı bir anahtar gerekir. "
+             + "Depolar sayfasında bu depo için parolasız (servis) erişimi açın.",
+        var r when r.Contains("is denied", StringComparison.OrdinalIgnoreCase)
+            => "Servis hesabının bu yola okuma izni yok. Yolu plandan çıkarın ya da hesaba okuma izni verin. "
+             + "Tek tek okunamayan dosyalar artık yedeklemeyi durdurmaz, yalnızca atlanır.",
+        var r when r.Contains("being used by another process", StringComparison.OrdinalIgnoreCase)
+            => "Dosya başka bir işlem tarafından açık tutuluyordu. VSS ile yedekleme açık dosyaları da alabilir.",
+        var r when r.Contains("Anomaly", StringComparison.OrdinalIgnoreCase)
+            => "Bu çalışmada beklenenden çok daha fazla dosya değişti veya silindi. Fidye yazılımı olasılığına karşı "
+             + "iş durduruldu ve hiçbir şey deponun içine yazılmadı.",
+        _ => "İşin ham hata metni aşağıdadır.",
+    };
 }

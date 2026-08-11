@@ -6,151 +6,220 @@
 @using ServerBackup.Data.Entities
 @using ServerBackup.Engine.Retention
 @using ServerBackup.Engine.Scheduling
+@using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
+@using ServerBackup.Service.Storage
 @inject IOptions<ServerBackupOptions> Options
 @inject JobQueue Queue
 
+<PageHeader Title="Planlar">
+    <Actions>
+        <SbButton Variant="SbButtonVariant.Primary" Icon="plus" OnClick="OpenCreateDialog"
+                  Disabled="@(Options.Value.Repositories.Count == 0)"
+                  DisabledReason="@(Options.Value.Repositories.Count == 0 ? "Önce bir depo yapılandırın" : null)">
+            Yeni plan
+        </SbButton>
+    </Actions>
+</PageHeader>
+
 <div class="sb-content">
-<h1>Yedekleme Planları</h1>
+    <div class="sb-stack">
+        @if (_message is not null)
+        {
+            <SbBanner Tone="@_messageTone" Icon="@(_messageTone == SbBannerTone.Err ? "alert" : "check")" Title="@_message" />
+        }
 
-@if (_plans is null)
-{
-    <p>Yükleniyor...</p>
-}
-else
-{
-    <table>
-        <thead>
-            <tr>
-                <th>Depo</th>
-                <th>İsim</th>
-                <th>Cron</th>
-                <th>Kaynaklar</th>
-                <th>Saklama</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var (repoPath, plan) in _plans)
+        <SbCard Title="Yedekleme planları" Flush="true">
+            @if (_plans is null)
             {
-                <tr>
-                    <td>@repoPath</td>
-                    <td>@plan.Name</td>
-                    <td>@plan.CronSchedule</td>
-                    <td>@string.Join(", ", JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson) ?? [])</td>
-                    <td>@(plan.RetentionPolicyJson is null ? "-" : "Ayarlı")</td>
-                    <td>
-                        <SbButton
-                            OnClick="() => BackupNowAsync(repoPath, plan)"
-                            Disabled="@(_runningPlanId == plan.PlanId)"
-                            DisabledReason="@(_runningPlanId == plan.PlanId ? "Zaten kuyrukta" : null)">
-                            @(_runningPlanId == plan.PlanId ? "Kuyruğa alındı..." : "Şimdi Yedekle")
-                        </SbButton>
-                    </td>
-                </tr>
+                <div class="sb-card-body"><SbSkeleton /></div>
             }
-        </tbody>
-    </table>
-}
+            else if (_plans.Count == 0)
+            {
+                <SbEmptyState Message="Henüz plan yok. Bir plan, hangi yolların hangi sıklıkta yedekleneceğini tanımlar."
+                              ActionText="@(Options.Value.Repositories.Count == 0 ? null : "Yeni plan")"
+                              OnAction="OpenCreateDialog" />
+            }
+            else
+            {
+                <div class="sb-table-wrap">
+                    <table class="sb-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Plan</th>
+                                <th scope="col">Depo</th>
+                                <th scope="col">Zamanlama</th>
+                                <th scope="col">Kaynaklar</th>
+                                <th scope="col">Saklama</th>
+                                <th scope="col">Sonraki çalışma</th>
+                                <th scope="col"><span class="sb-sr-only">Eylemler</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _plans)
+                            {
+                                <tr>
+                                    <td class="sb-name">@row.Plan.Name</td>
+                                    <td>
+                                        <div>@RepoNaming.DisplayName(row.RepoPath)</div>
+                                        <div class="path" title="@row.RepoPath">@Fmt.TruncatePath(row.RepoPath, 30)</div>
+                                    </td>
+                                    <td title="@row.Plan.CronSchedule">@CronText.Describe(row.Plan.CronSchedule)</td>
+                                    <td>
+                                        <span title="@string.Join("\n", row.SourcePaths)">
+                                            @SourceSummary(row.SourcePaths)
+                                        </span>
+                                    </td>
+                                    <td>@row.RetentionText</td>
+                                    <td class="r num">@row.NextRunText</td>
+                                    <td class="r">
+                                        <SbButton Size="SbButtonSize.Sm"
+                                                  OnClick="() => BackupNowAsync(row)"
+                                                  Disabled="@(_queuedPlanId == row.Plan.PlanId)"
+                                                  DisabledReason="@(_queuedPlanId == row.Plan.PlanId ? "Bu plan zaten kuyrukta" : null)">
+                                            @(_queuedPlanId == row.Plan.PlanId ? "Kuyrukta" : "Şimdi yedekle")
+                                        </SbButton>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </SbCard>
+    </div>
+</div>
 
-<div class="sb-card">
-    <div class="sb-card-head"><h3>Yeni Plan</h3></div>
-    <div class="sb-card-body">
-    <EditForm Model="_form" OnValidSubmit="CreatePlanAsync">
-        <div class="sb-stack">
-            <SbField Label="Depo">
-                <select class="sb-select" @bind="_form.RepoPath">
+<SbDialog Title="Yeni plan" Description="Kaynaklar, zamanlama ve saklama politikası."
+          Open="_createDialogOpen" OnClose="CloseCreateDialog">
+    <ChildContent>
+        <div class="sb-fs">
+            <div class="sb-fs-title">1 · Hedef ve kaynaklar</div>
+
+            <SbField Label="Depo" For="f-plan-repo">
+                <select class="sb-select" id="f-plan-repo" @bind="_form.RepoPath">
                     @foreach (var repoPath in Options.Value.Repositories)
                     {
-                        <option value="@repoPath">@repoPath</option>
+                        <option value="@repoPath">@RepoNaming.DisplayName(repoPath) — @repoPath</option>
                     }
                 </select>
             </SbField>
 
-            <SbField Label="Plan Adı">
-                <input class="sb-input" @bind="_form.Name" />
+            <SbField Label="Plan adı" For="f-plan-name">
+                <input class="sb-input" id="f-plan-name" @bind="_form.Name" placeholder="Muhasebe — günlük" />
             </SbField>
 
-            <SbField Label="Kaynak Yollar (virgülle ayrılmış)">
-                <input class="sb-input" @bind="_form.SourcePaths" placeholder="C:\Veri, D:\Projeler" />
+            <SbField Label="Kaynak yollar" Group="true" Hint="Bir diski seçmek o diskin tamamını yedekler; okunamayan sistem klasörleri atlanır.">
+                <SbPathPicker Paths="_form.SourcePaths" PathsChanged="p => _form.SourcePaths = p" />
             </SbField>
+        </div>
 
-            <label>
+        <div class="sb-fs">
+            <div class="sb-fs-title">2 · Zamanlama</div>
+
+            <label class="sb-check">
                 <input type="checkbox" @bind="_form.UseSimpleScheduler" />
-                Basit zamanlayıcı kullan (gün + saat aralığı + sıklık)
+                Basit zamanlayıcı (gün, saat aralığı, sıklık)
             </label>
 
             @if (_form.UseSimpleScheduler)
             {
-                <div class="sb-stack">
-                    <SbField Label="Günler">
-                        <div class="sb-row">
-                            @foreach (var day in _weekDayOrder)
-                            {
-                                <label>
-                                    <input type="checkbox" checked="@_form.SelectedDays.Contains(day)"
-                                           @onchange="e => ToggleDay(day, (bool)e.Value!)" />
-                                    @_dayLabels[day]
-                                </label>
-                            }
-                        </div>
-                    </SbField>
-
-                    <div class="sb-row">
-                        <SbField Label="Başlangıç saati" Width="SbFieldWidth.Xs">
-                            <input type="number" min="0" max="23" class="sb-input" @bind="_form.StartHour" />
-                        </SbField>
-                        <SbField Label="Bitiş saati" Width="SbFieldWidth.Xs">
-                            <input type="number" min="0" max="23" class="sb-input" @bind="_form.EndHour" />
-                        </SbField>
-                        <SbField Label="Sıklık" Width="SbFieldWidth.Sm">
-                            <select class="sb-select" @bind="_form.IntervalHours">
-                                <option value="1">Her saat</option>
-                                <option value="2">2 saatte bir</option>
-                                <option value="3">3 saatte bir</option>
-                                <option value="4">4 saatte bir</option>
-                                <option value="6">6 saatte bir</option>
-                                <option value="8">8 saatte bir</option>
-                                <option value="12">12 saatte bir</option>
-                                <option value="24">Günde 1 kere</option>
-                            </select>
-                        </SbField>
+                <SbField Label="Günler" Group="true">
+                    <div class="sb-row sb-row--wrap">
+                        @foreach (var day in WeekDayOrder)
+                        {
+                            <label class="sb-check">
+                                <input type="checkbox" checked="@_form.SelectedDays.Contains(day)"
+                                       @onchange="e => ToggleDay(day, (bool)e.Value!)" />
+                                @DayLabels[day]
+                            </label>
+                        }
                     </div>
+                </SbField>
 
-                    <p class="sb-hint">Önizleme: <code>@TryBuildSimpleCron()</code></p>
+                <div class="sb-row">
+                    <SbField Label="Başlangıç saati" For="f-plan-start" Width="SbFieldWidth.Xs">
+                        <input type="number" min="0" max="23" class="sb-input" id="f-plan-start" @bind="_form.StartHour" />
+                    </SbField>
+                    <SbField Label="Bitiş saati" For="f-plan-end" Width="SbFieldWidth.Xs">
+                        <input type="number" min="0" max="23" class="sb-input" id="f-plan-end" @bind="_form.EndHour" />
+                    </SbField>
+                    <SbField Label="Sıklık" For="f-plan-interval" Width="SbFieldWidth.Sm">
+                        <select class="sb-select" id="f-plan-interval" @bind="_form.IntervalHours">
+                            <option value="1">Her saat</option>
+                            <option value="2">2 saatte bir</option>
+                            <option value="3">3 saatte bir</option>
+                            <option value="4">4 saatte bir</option>
+                            <option value="6">6 saatte bir</option>
+                            <option value="8">8 saatte bir</option>
+                            <option value="12">12 saatte bir</option>
+                            <option value="24">Günde 1 kere</option>
+                        </select>
+                    </SbField>
                 </div>
             }
             else
             {
-                <SbField Label="Cron İfadesi">
-                    <input class="sb-input" @bind="_form.Cron" placeholder="0 3 * * * (her gün 03:00)" />
+                <SbField Label="Cron ifadesi" For="f-plan-cron" Hint="Dakika saat gün ay haftagünü — örnek: 0 3 * * *">
+                    <input class="sb-input sb-input--mono" id="f-plan-cron" @bind="_form.Cron" placeholder="0 3 * * *" />
                 </SbField>
             }
 
-            <SbField Label="Keep Daily" Width="SbFieldWidth.Xs">
-                <input type="number" class="sb-input" @bind="_form.KeepDaily" />
-            </SbField>
-
-            <button type="submit" class="sb-btn sb-btn--primary">Plan Oluştur</button>
+            @{
+                var preview = BuildPreview();
+            }
+            <div class="sb-preview">
+                <div class="sb-preview-t">@preview.Description</div>
+                <div class="sb-hint">@preview.NextRuns</div>
+            </div>
         </div>
-    </EditForm>
 
-    @if (_message is not null)
-    {
-        <p>@_message</p>
-    }
-    </div>
-</div>
-</div>
+        <div class="sb-fs">
+            <div class="sb-fs-title">3 · Saklama politikası</div>
+            <div class="sb-row sb-row--wrap">
+                <SbField Label="Son N" For="f-keep-last" Width="SbFieldWidth.Xs">
+                    <input type="number" min="0" class="sb-input" id="f-keep-last" @bind="_form.KeepLast" />
+                </SbField>
+                <SbField Label="Günlük" For="f-keep-daily" Width="SbFieldWidth.Xs">
+                    <input type="number" min="0" class="sb-input" id="f-keep-daily" @bind="_form.KeepDaily" />
+                </SbField>
+                <SbField Label="Haftalık" For="f-keep-weekly" Width="SbFieldWidth.Xs">
+                    <input type="number" min="0" class="sb-input" id="f-keep-weekly" @bind="_form.KeepWeekly" />
+                </SbField>
+                <SbField Label="Aylık" For="f-keep-monthly" Width="SbFieldWidth.Xs">
+                    <input type="number" min="0" class="sb-input" id="f-keep-monthly" @bind="_form.KeepMonthly" />
+                </SbField>
+                <SbField Label="Yıllık" For="f-keep-yearly" Width="SbFieldWidth.Xs">
+                    <input type="number" min="0" class="sb-input" id="f-keep-yearly" @bind="_form.KeepYearly" />
+                </SbField>
+            </div>
+            <p class="sb-hint">Boş bırakılan alanlar dikkate alınmaz. Hiçbiri doldurulmazsa snapshot'lar budanmaz.</p>
+        </div>
+
+        @if (_formError is not null)
+        {
+            <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="@_formError" />
+        }
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="CloseCreateDialog">Vazgeç</SbButton>
+        <SbButton Variant="SbButtonVariant.Primary" OnClick="CreatePlanAsync">Plan oluştur</SbButton>
+    </Footer>
+</SbDialog>
 
 @code {
     private sealed class PlanForm
     {
         public string RepoPath { get; set; } = "";
         public string Name { get; set; } = "";
-        public string SourcePaths { get; set; } = "";
+        public IReadOnlyList<string> SourcePaths { get; set; } = [];
         public string Cron { get; set; } = "0 3 * * *";
+
+        public int? KeepLast { get; set; }
         public int? KeepDaily { get; set; }
+        public int? KeepWeekly { get; set; }
+        public int? KeepMonthly { get; set; }
+        public int? KeepYearly { get; set; }
 
         public bool UseSimpleScheduler { get; set; } = true;
         public HashSet<DayOfWeek> SelectedDays { get; set; } =
@@ -162,33 +231,40 @@ else
         public int IntervalHours { get; set; } = 2;
     }
 
-    private readonly DayOfWeek[] _weekDayOrder =
+    private sealed record PlanRow(
+        string RepoPath, PlanEntity Plan, IReadOnlyList<string> SourcePaths, string RetentionText, string NextRunText);
+
+    private static readonly DayOfWeek[] WeekDayOrder =
     [
         DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
         DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday,
     ];
 
-    private readonly Dictionary<DayOfWeek, string> _dayLabels = new()
+    private static readonly Dictionary<DayOfWeek, string> DayLabels = new()
     {
         [DayOfWeek.Monday] = "Pzt", [DayOfWeek.Tuesday] = "Sal", [DayOfWeek.Wednesday] = "Çar",
         [DayOfWeek.Thursday] = "Per", [DayOfWeek.Friday] = "Cum", [DayOfWeek.Saturday] = "Cmt",
         [DayOfWeek.Sunday] = "Paz",
     };
 
-    private List<(string RepoPath, PlanEntity Plan)>? _plans;
-    private readonly PlanForm _form = new();
+    private List<PlanRow>? _plans;
+    private PlanForm _form = new();
+    private bool _createDialogOpen;
+    private string? _formError;
     private string? _message;
-    private string? _runningPlanId;
+    private SbBannerTone _messageTone = SbBannerTone.Ok;
+    private string? _queuedPlanId;
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync() => await LoadPlansAsync();
+
+    private void OpenCreateDialog()
     {
-        // <select @bind> only writes back to the model on a user-driven
-        // change event — with a single repo configured that event never
-        // fires, so without this the field stays "" and every submit fails
-        // silent validation ("Tüm alanları doldurun.").
-        _form.RepoPath = Options.Value.Repositories.FirstOrDefault() ?? "";
-        await LoadPlansAsync();
+        _form = new PlanForm { RepoPath = Options.Value.Repositories.FirstOrDefault() ?? "" };
+        _formError = null;
+        _createDialogOpen = true;
     }
+
+    private void CloseCreateDialog() => _createDialogOpen = false;
 
     private void ToggleDay(DayOfWeek day, bool selected)
     {
@@ -203,55 +279,82 @@ else
     }
 
     /// <summary>
-    /// "Günde bir kere" (24 saatte bir) seçilince bitiş saatini başlangıçla
-    /// eşitliyoruz — CronBuilder bunu tek bir sabit saat olarak yorumluyor,
-    /// aralık/adım üretmiyor.
-    private string TryBuildSimpleCron()
+    /// "Günde bir kere" (24 saatte bir) seçilince bitiş saati başlangıçla
+    /// eşitlenir — CronBuilder bunu tek bir sabit saat olarak yorumlar,
+    /// aralık/adım üretmez.
+    /// </summary>
+    private string BuildCron() =>
+        CronBuilder.Build(
+            _form.SelectedDays,
+            _form.StartHour,
+            _form.IntervalHours >= 24 ? _form.StartHour : _form.EndHour,
+            _form.IntervalHours >= 24 ? 1 : _form.IntervalHours);
+
+    /// <summary>design-system.md §12.3 — the operator verifies the schedule from the next run times, not from cron syntax.</summary>
+    private (string Description, string NextRuns) BuildPreview()
     {
+        string cron;
         try
         {
-            var endHour = _form.IntervalHours >= 24 ? _form.StartHour : _form.EndHour;
-            return CronBuilder.Build(_form.SelectedDays, _form.StartHour, endHour, _form.IntervalHours >= 24 ? 1 : _form.IntervalHours);
+            cron = _form.UseSimpleScheduler ? BuildCron() : _form.Cron;
+            Cronos.CronExpression.Parse(cron, Cronos.CronFormat.Standard);
         }
         catch (Exception ex)
         {
-            return $"(geçersiz: {ex.Message})";
+            return ("Zamanlama geçersiz", ex.Message);
         }
+
+        var runs = new List<string>();
+        var cursor = DateTimeOffset.UtcNow;
+        for (var i = 0; i < 3; i++)
+        {
+            var next = CronScheduleCalculator.GetNextOccurrence(cron, cursor);
+            if (next is null)
+            {
+                break;
+            }
+
+            runs.Add(Fmt.DateTime(next.Value));
+            cursor = next.Value;
+        }
+
+        return (CronText.Describe(cron),
+            runs.Count == 0 ? "Sonraki çalışma bulunamadı." : $"Sonraki çalışmalar: {string.Join(" · ", runs)}");
     }
 
-    private async Task BackupNowAsync(string repoPath, PlanEntity plan)
+    private static string SourceSummary(IReadOnlyList<string> paths) => paths.Count switch
     {
-        _message = null;
-        var dbPath = Path.Combine(repoPath, "catalog.db");
-        await using var db = CatalogDbContextFactory.Create(dbPath);
+        0 => "—",
+        1 => Fmt.TruncatePath(paths[0], 28),
+        _ => $"{Fmt.TruncatePath(paths[0], 20)} +{paths.Count - 1}",
+    };
 
-        var alreadyQueued = await db.Jobs.AnyAsync(
-            j => j.PlanId == plan.PlanId && (j.Status == JobStatus.Pending || j.Status == JobStatus.Running));
-        if (alreadyQueued)
+    private static string RetentionSummary(string? retentionJson)
+    {
+        if (string.IsNullOrEmpty(retentionJson))
         {
-            _message = $"'{plan.Name}' için zaten bekleyen veya çalışan bir iş var.";
-            return;
+            return "Budanmaz";
         }
 
-        var jobId = Guid.NewGuid().ToString("n");
-        db.Jobs.Add(new JobEntity
+        var policy = JsonSerializer.Deserialize<RetentionPolicy>(retentionJson);
+        if (policy is null)
         {
-            JobId = jobId,
-            PlanId = plan.PlanId,
-            Kind = "backup",
-            Status = JobStatus.Pending,
-        });
-        await db.SaveChangesAsync();
+            return "Budanmaz";
+        }
 
-        await Queue.Writer.WriteAsync(new ScheduledJob(repoPath, jobId, plan.PlanId));
+        var parts = new List<string>();
+        if (policy.KeepLast is { } last) parts.Add($"son {last}");
+        if (policy.KeepDaily is { } daily) parts.Add($"{daily} günlük");
+        if (policy.KeepWeekly is { } weekly) parts.Add($"{weekly} haftalık");
+        if (policy.KeepMonthly is { } monthly) parts.Add($"{monthly} aylık");
+        if (policy.KeepYearly is { } yearly) parts.Add($"{yearly} yıllık");
 
-        _runningPlanId = plan.PlanId;
-        _message = $"'{plan.Name}' kuyruğa alındı — İş Geçmişi sayfasından ilerlemeyi izleyebilirsin.";
+        return parts.Count == 0 ? "Budanmaz" : string.Join(" · ", parts);
     }
 
     private async Task LoadPlansAsync()
     {
-        var plans = new List<(string, PlanEntity)>();
+        var rows = new List<PlanRow>();
 
         foreach (var repoPath in Options.Value.Repositories)
         {
@@ -262,62 +365,122 @@ else
             }
 
             await using var db = CatalogDbContextFactory.Create(dbPath);
-            foreach (var plan in await db.Plans.AsNoTracking().ToListAsync())
+            var plans = await db.Plans.AsNoTracking().ToListAsync();
+            var snapshots = await db.Snapshots.AsNoTracking().ToListAsync();
+
+            foreach (var plan in plans)
             {
-                plans.Add((repoPath, plan));
+                var lastRun = snapshots
+                    .Where(s => s.PlanId == plan.PlanId)
+                    .OrderByDescending(s => s.StartedAtUtc)
+                    .FirstOrDefault()?.StartedAtUtc;
+
+                rows.Add(new PlanRow(
+                    repoPath,
+                    plan,
+                    JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson) ?? [],
+                    RetentionSummary(plan.RetentionPolicyJson),
+                    NextRunText(plan.CronSchedule, lastRun)));
             }
         }
 
-        _plans = plans;
+        _plans = rows;
     }
 
-    private async Task CreatePlanAsync()
+    private static string NextRunText(string? cron, DateTimeOffset? lastRunUtc)
     {
-        if (string.IsNullOrWhiteSpace(_form.RepoPath) || string.IsNullOrWhiteSpace(_form.Name)
-            || string.IsNullOrWhiteSpace(_form.SourcePaths))
+        if (string.IsNullOrWhiteSpace(cron))
         {
-            _message = "Tüm alanları doldurun.";
-            return;
-        }
-
-        if (_form.UseSimpleScheduler)
-        {
-            if (_form.SelectedDays.Count == 0)
-            {
-                _message = "En az bir gün seçin.";
-                return;
-            }
-
-            try
-            {
-                var endHour = _form.IntervalHours >= 24 ? _form.StartHour : _form.EndHour;
-                _form.Cron = CronBuilder.Build(_form.SelectedDays, _form.StartHour, endHour, _form.IntervalHours >= 24 ? 1 : _form.IntervalHours);
-            }
-            catch (Exception ex)
-            {
-                _message = $"Zamanlama oluşturulamadı: {ex.Message}";
-                return;
-            }
-        }
-        else if (string.IsNullOrWhiteSpace(_form.Cron))
-        {
-            _message = "Tüm alanları doldurun.";
-            return;
+            return "—";
         }
 
         try
         {
-            Cronos.CronExpression.Parse(_form.Cron, Cronos.CronFormat.Standard);
+            var next = CronScheduleCalculator.GetNextOccurrence(cron, lastRunUtc ?? DateTimeOffset.UtcNow);
+            return next is null ? "—" : Fmt.DateTime(next.Value);
         }
-        catch (Exception ex)
+        catch (Cronos.CronFormatException)
         {
-            _message = $"Geçersiz cron ifadesi: {ex.Message}";
+            return "Geçersiz";
+        }
+    }
+
+    private async Task BackupNowAsync(PlanRow row)
+    {
+        _message = null;
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(row.RepoPath, "catalog.db"));
+        var alreadyQueued = await db.Jobs.AnyAsync(
+            j => j.PlanId == row.Plan.PlanId && (j.Status == JobStatus.Pending || j.Status == JobStatus.Running));
+        if (alreadyQueued)
+        {
+            _messageTone = SbBannerTone.Warn;
+            _message = $"'{row.Plan.Name}' için zaten bekleyen veya çalışan bir iş var.";
             return;
         }
 
-        var sources = _form.SourcePaths.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var retentionJson = _form.KeepDaily is { } keepDaily
-            ? JsonSerializer.Serialize(new RetentionPolicy(KeepDaily: keepDaily))
+        var jobId = Guid.NewGuid().ToString("n");
+        db.Jobs.Add(new JobEntity
+        {
+            JobId = jobId,
+            PlanId = row.Plan.PlanId,
+            Kind = "backup",
+            Status = JobStatus.Pending,
+        });
+        await db.SaveChangesAsync();
+
+        await Queue.Writer.WriteAsync(new ScheduledJob(row.RepoPath, jobId, row.Plan.PlanId));
+
+        _queuedPlanId = row.Plan.PlanId;
+        _messageTone = SbBannerTone.Ok;
+        _message = $"'{row.Plan.Name}' kuyruğa alındı. İlerlemeyi İş geçmişi sayfasından izleyebilirsiniz.";
+    }
+
+    private async Task CreatePlanAsync()
+    {
+        _formError = null;
+
+        if (string.IsNullOrWhiteSpace(_form.RepoPath))
+        {
+            _formError = "Bir depo seçin.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.Name))
+        {
+            _formError = "Plana bir ad verin.";
+            return;
+        }
+
+        if (_form.SourcePaths.Count == 0)
+        {
+            _formError = "En az bir kaynak yol seçin.";
+            return;
+        }
+
+        string cron;
+        try
+        {
+            if (_form.UseSimpleScheduler && _form.SelectedDays.Count == 0)
+            {
+                _formError = "En az bir gün seçin.";
+                return;
+            }
+
+            cron = _form.UseSimpleScheduler ? BuildCron() : _form.Cron;
+            Cronos.CronExpression.Parse(cron, Cronos.CronFormat.Standard);
+        }
+        catch (Exception ex) when (ex is ArgumentException or Cronos.CronFormatException)
+        {
+            _formError = $"Zamanlama oluşturulamadı: {ex.Message}";
+            return;
+        }
+
+        var hasRetention = _form.KeepLast is not null || _form.KeepDaily is not null || _form.KeepWeekly is not null
+            || _form.KeepMonthly is not null || _form.KeepYearly is not null;
+        var retentionJson = hasRetention
+            ? JsonSerializer.Serialize(new RetentionPolicy(
+                _form.KeepLast, null, _form.KeepDaily, _form.KeepWeekly, _form.KeepMonthly, _form.KeepYearly))
             : null;
 
         await using var db = CatalogDbContextFactory.Create(Path.Combine(_form.RepoPath, "catalog.db"));
@@ -325,16 +488,16 @@ else
         {
             PlanId = Guid.NewGuid().ToString("n"),
             Name = _form.Name,
-            SourcePathsJson = JsonSerializer.Serialize(sources),
-            CronSchedule = _form.Cron,
+            SourcePathsJson = JsonSerializer.Serialize(_form.SourcePaths),
+            CronSchedule = cron,
             RetentionPolicyJson = retentionJson,
             CreatedAtUtc = DateTimeOffset.UtcNow,
         });
         await db.SaveChangesAsync();
 
-        _message = "Plan oluşturuldu.";
-        _form.Name = "";
-        _form.SourcePaths = "";
+        _createDialogOpen = false;
+        _messageTone = SbBannerTone.Ok;
+        _message = $"'{_form.Name}' planı oluşturuldu.";
         await LoadPlansAsync();
     }
 }

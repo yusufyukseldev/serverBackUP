@@ -6,84 +6,360 @@
 @using ServerBackup.Data.Entities
 @using ServerBackup.Engine.Repository
 @using ServerBackup.Engine.Restore
+@using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
+@using ServerBackup.Service.Storage
+@implements IDisposable
 @inject IOptions<ServerBackupOptions> Options
 
+<PageHeader Title="Geri yükleme" />
+
 <div class="sb-content sb-content--form">
-<h1>Geri Yükleme Sihirbazı</h1>
-
-<div class="card">
-    <EditForm Model="_form" OnValidSubmit="RunRestoreAsync">
-        <label>Depo</label>
-        <select @bind="_form.RepoPath" @bind:after="OnRepoChangedAsync">
-            <option value="">— seçin —</option>
-            @foreach (var repoPath in Options.Value.Repositories)
+    <div class="sb-stack">
+        <ol class="sb-steps" aria-label="Geri yükleme adımları">
+            @foreach (var step in Steps)
             {
-                <option value="@repoPath">@repoPath</option>
+                <li class="@StepClass(step.Number)" aria-current="@(_step == step.Number ? "step" : null)">
+                    <span class="sb-step-n">@step.Number</span> @step.Label
+                </li>
             }
-        </select>
+        </ol>
 
-        @if (_snapshots is not null)
+        @if (_error is not null)
         {
-            <label>Snapshot</label>
-            <select @bind="_form.SnapshotId">
-                <option value="">— seçin —</option>
-                @foreach (var s in _snapshots)
+            <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="@_error" />
+        }
+
+        <SbCard Title="@Steps[_step - 1].Label">
+            <div class="sb-stack">
+                @switch (_step)
                 {
-                    <option value="@s.SnapshotId">@s.SnapshotId (@s.StartedAtUtc.ToString("u"))</option>
+                    case 1:
+                        <SbField Label="Depo" For="f-res-repo">
+                            <select class="sb-select" id="f-res-repo" @bind="_repoPath" @bind:after="OnRepoChangedAsync">
+                                <option value="">— depo seçin —</option>
+                                @foreach (var path in Options.Value.Repositories)
+                                {
+                                    <option value="@path">@RepoNaming.DisplayName(path)</option>
+                                }
+                            </select>
+                        </SbField>
+
+                        @if (!string.IsNullOrEmpty(_repoPath) && _masterKey is null)
+                        {
+                            <SbField Label="Depo parolası" For="f-res-pwd" Hint="Bu depo gözetimsiz erişime açık değil, parola gerekiyor.">
+                                <input class="sb-input" type="password" id="f-res-pwd" @bind="_password" />
+                            </SbField>
+                            <div><SbButton OnClick="UnlockAsync">Kilidi aç</SbButton></div>
+                        }
+                        else if (_masterKey is not null)
+                        {
+                            <SbBanner Tone="SbBannerTone.Ok" Icon="check" Title="Depo açıldı" />
+                        }
+                        break;
+
+                    case 2:
+                        @if (_snapshots is null || _snapshots.Count == 0)
+                        {
+                            <SbEmptyState Message="Bu depoda geri yüklenebilecek snapshot yok." />
+                        }
+                        else
+                        {
+                            <SbField Label="Snapshot" For="f-res-snap">
+                                <select class="sb-select" id="f-res-snap" @bind="_snapshotId">
+                                    <option value="">— snapshot seçin —</option>
+                                    @foreach (var s in _snapshots)
+                                    {
+                                        <option value="@s.SnapshotId">@Fmt.DateTime(s.StartedAtUtc) — @s.SnapshotId[..8]</option>
+                                    }
+                                </select>
+                            </SbField>
+                        }
+                        break;
+
+                    case 3:
+                        <SbField Label="Nereye geri yüklensin?" Group="true">
+                            <div class="sb-stack">
+                                <label class="sb-check">
+                                    <input type="radio" name="mode" value="InPlace"
+                                           checked="@_inPlace"
+                                           @onchange="() => SetMode(true)" />
+                                    <span>
+                                        <strong>Bu yedeğe dön</strong> — dosyalar alındıkları konumlara geri yazılır
+                                    </span>
+                                </label>
+                                <label class="sb-check">
+                                    <input type="radio" name="mode" value="Extract"
+                                           checked="@(!_inPlace)"
+                                           @onchange="() => SetMode(false)" />
+                                    <span>
+                                        <strong>Başka bir dizine çıkar</strong> — orijinal konuma dokunulmaz
+                                    </span>
+                                </label>
+                            </div>
+                        </SbField>
+
+                        @if (_inPlace)
+                        {
+                            <SbField Label="Üzerine yazılacak konumlar" Group="true">
+                                @if (SourcePaths.Count == 0)
+                                {
+                                    <p class="sb-hint">Bu snapshot için kaynak yol kaydı yok, orijinal konuma dönülemez.</p>
+                                }
+                                else
+                                {
+                                    <ul class="sb-picker-list">
+                                        @foreach (var path in SourcePaths)
+                                        {
+                                            <li><SbIcon Name="folder" Small="true" /><span class="sb-picker-path">@path</span></li>
+                                        }
+                                    </ul>
+                                }
+                            </SbField>
+                        }
+                        else
+                        {
+                            <SbField Label="Hedef dizin" For="f-res-target" Hint="Snapshot bu dizinin altına yazılır.">
+                                <input class="sb-input sb-input--mono" id="f-res-target" @bind="_target" placeholder="D:\Geri" />
+                            </SbField>
+                        }
+                        break;
+
+                    case 4:
+                        <SbField Label="Hedefte aynı isimde dosya varsa" Group="true">
+                            <div class="sb-stack">
+                                <label class="sb-check">
+                                    <input type="radio" name="overwrite" value="Skip"
+                                           checked="@(_overwrite == OverwritePolicy.Skip)"
+                                           @onchange="() => _overwrite = OverwritePolicy.Skip" />
+                                    Var olan dosyaları atla — hedefteki dosyalara dokunulmaz
+                                </label>
+                                <label class="sb-check">
+                                    <input type="radio" name="overwrite" value="Overwrite"
+                                           checked="@(_overwrite == OverwritePolicy.Overwrite)"
+                                           @onchange="() => _overwrite = OverwritePolicy.Overwrite" />
+                                    Her zaman üzerine yaz — hedefteki değişiklikler kaybolur
+                                </label>
+                                <label class="sb-check">
+                                    <input type="radio" name="overwrite" value="Fail"
+                                           checked="@(_overwrite == OverwritePolicy.Fail)"
+                                           @onchange="() => _overwrite = OverwritePolicy.Fail" />
+                                    Dosya varsa dur — hiçbir şey üzerine yazılmasın
+                                </label>
+                            </div>
+                        </SbField>
+
+                        @if (_inPlace && _overwrite != OverwritePolicy.Overwrite)
+                        {
+                            <SbBanner Tone="SbBannerTone.Warn" Icon="alert"
+                                      Title="Bu seçimle yedeğe tam dönülmez"
+                                      Body="Orijinal konumda hâlâ duran dosyalar olduğu gibi kalır; yalnızca eksik dosyalar geri gelir." />
+                        }
+                        break;
+
+                    case 5:
+                        <dl class="sb-dl">
+                            <dt>Depo</dt><dd>@RepoNaming.DisplayName(_repoPath ?? "")</dd>
+                            <dt>Snapshot</dt><dd class="mono">@_snapshotId</dd>
+                            <dt>Alındığı tarih</dt><dd>@SelectedSnapshotDate</dd>
+                            <dt>Nereye</dt>
+                            <dd>
+                                @if (_inPlace)
+                                {
+                                    <span>Orijinal konum</span>
+                                    <div class="mono">@string.Join(", ", SourcePaths)</div>
+                                }
+                                else
+                                {
+                                    <span class="mono">@_target</span>
+                                }
+                            </dd>
+                            <dt>Üzerine yazma</dt><dd>@OverwriteText(_overwrite)</dd>
+                            <dt>ACL / zaman damgası</dt><dd>Kaynaktaki haliyle uygulanır</dd>
+                        </dl>
+
+                        @if (_inPlace)
+                        {
+                            <SbBanner Tone="SbBannerTone.Err" Icon="alert"
+                                      Title="Bu işlem canlı dosyaların üzerine yazar"
+                                      Body="@($"{string.Join(", ", SourcePaths)} içeriği bu snapshot'taki haline döndürülür. Yedek alındıktan sonra yapılan değişiklikler kaybolur.")" />
+                        }
+                        else
+                        {
+                            <SbBanner Tone="SbBannerTone.Warn" Icon="alert"
+                                      Title="Bu işlem hedef dizine yazar"
+                                      Body="@($"Dosyalar {_target} altına açılır. Başlamadan önce hedefin doğru olduğunu doğrulayın.")" />
+                        }
+                        break;
                 }
-            </select>
-        }
+            </div>
+        </SbCard>
 
-        <label>Hedef Dizin</label>
-        <input @bind="_form.Target" placeholder="C:\Geri" />
+        <div class="sb-row">
+            <SbButton OnClick="Back" Disabled="@(_step == 1 || _running)"
+                      DisabledReason="@(_step == 1 ? "İlk adımdasınız" : _running ? "Geri yükleme sürüyor" : null)">
+                Geri
+            </SbButton>
+            <div class="sp"></div>
+            @if (_step < 5)
+            {
+                <SbButton Variant="SbButtonVariant.Primary" OnClick="Next"
+                          Disabled="@(!CanAdvance)" DisabledReason="@AdvanceBlockedReason">
+                    İleri
+                </SbButton>
+            }
+            else
+            {
+                <SbButton Variant="SbButtonVariant.Primary" OnClick="RunRestoreAsync"
+                          Disabled="@_running" DisabledReason="@(_running ? "Geri yükleme sürüyor" : null)">
+                    @(_running ? "Geri yükleniyor..." : "Geri yüklemeyi başlat")
+                </SbButton>
+            }
+        </div>
 
-        @if (_form.RepoPath is not null && !UnattendedKeyStore.IsEnabled(_form.RepoPath))
+        @if (_log.Count > 0)
         {
-            <label>Parola</label>
-            <input type="password" @bind="_form.Password" />
-        }
-
-        <button type="submit" disabled="@_running">@(_running ? "Geri yükleniyor..." : "Geri Yükle")</button>
-    </EditForm>
-</div>
-
-@if (_log.Count > 0)
-{
-    <div class="progress-log">
-        @foreach (var line in _log)
-        {
-            @line<br />
+            <SbCard Title="Kayıtlar" Flush="true">
+                <div class="sb-card-body">
+                    <SbLogConsole Lines="_log" />
+                </div>
+            </SbCard>
         }
     </div>
-}
 </div>
 
 @code {
-    private sealed class RestoreForm
+    private sealed record Step(int Number, string Label);
+
+    private static readonly Step[] Steps =
+    [
+        new(1, "Depo"),
+        new(2, "Snapshot"),
+        new(3, "Nereye"),
+        new(4, "Üzerine yazma politikası"),
+        new(5, "Onay"),
+    ];
+
+    [SupplyParameterFromQuery(Name = "repo")]
+    private string? RepoQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "snapshot")]
+    private string? SnapshotQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "mode")]
+    private string? ModeQuery { get; set; }
+
+    private int _step = 1;
+    private string? _repoPath;
+    private string? _password;
+    private byte[]? _masterKey;
+    private string _snapshotId = "";
+    private string _target = "";
+    private bool _inPlace;
+    private OverwritePolicy _overwrite = OverwritePolicy.Skip;
+
+    private List<SnapshotEntity>? _snapshots;
+    private Dictionary<string, List<string>> _sourcePathsBySnapshot = [];
+    private readonly List<LogLine> _log = [];
+    private bool _running;
+    private string? _error;
+
+    private List<string> SourcePaths => _snapshotId.Length > 0 && _sourcePathsBySnapshot.TryGetValue(_snapshotId, out var paths)
+        ? paths
+        : [];
+
+    private string? SelectedSnapshotDate =>
+        _snapshots?.FirstOrDefault(s => s.SnapshotId == _snapshotId) is { } s ? Fmt.DateTime(s.StartedAtUtc) : "—";
+
+    private bool CanAdvance => AdvanceBlockedReason is null;
+
+    private string? AdvanceBlockedReason => _step switch
     {
-        public string? RepoPath { get; set; }
-        public string SnapshotId { get; set; } = "";
-        public string Target { get; set; } = "";
-        public string? Password { get; set; }
+        1 when string.IsNullOrEmpty(_repoPath) => "Önce bir depo seçin",
+        1 when _masterKey is null => "Önce deponun kilidini açın",
+        2 when string.IsNullOrEmpty(_snapshotId) => "Önce bir snapshot seçin",
+        3 when _inPlace && SourcePaths.Count == 0 => "Bu snapshot'ın kaynak yolu kayıtlı değil",
+        3 when !_inPlace && string.IsNullOrWhiteSpace(_target) => "Hedef dizini yazın",
+        _ => null,
+    };
+
+    private string StepClass(int number) =>
+        number == _step ? "is-active" : number < _step ? "is-done" : "";
+
+    /// <summary>"Bu yedeğe dön" only means anything if it actually replaces what is there now.</summary>
+    private void SetMode(bool inPlace)
+    {
+        _inPlace = inPlace;
+        _overwrite = inPlace ? OverwritePolicy.Overwrite : OverwritePolicy.Skip;
     }
 
-    private readonly RestoreForm _form = new();
-    private List<SnapshotEntity>? _snapshots;
-    private readonly List<string> _log = [];
-    private bool _running;
+    private void Next()
+    {
+        if (CanAdvance && _step < 5)
+        {
+            _step++;
+        }
+    }
+
+    private void Back()
+    {
+        if (_step > 1)
+        {
+            _step--;
+        }
+    }
 
     private async Task OnRepoChangedAsync()
     {
+        _error = null;
         _snapshots = null;
-        if (string.IsNullOrEmpty(_form.RepoPath))
+        _snapshotId = "";
+        ClearKey();
+
+        if (string.IsNullOrEmpty(_repoPath))
         {
             return;
         }
 
-        var dbPath = Path.Combine(_form.RepoPath, "catalog.db");
+        if (UnattendedKeyStore.IsEnabled(_repoPath))
+        {
+            _masterKey = UnattendedKeyStore.Unlock(_repoPath);
+            await LoadSnapshotsAsync();
+        }
+    }
+
+    private async Task UnlockAsync()
+    {
+        if (string.IsNullOrEmpty(_repoPath) || string.IsNullOrEmpty(_password))
+        {
+            _error = "Depo parolasını girin.";
+            return;
+        }
+
+        try
+        {
+            _masterKey = await RepositoryKeyStore.UnlockAsync(_repoPath, _password);
+            _password = null;
+            _error = null;
+            await LoadSnapshotsAsync();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _error = "Parola yanlış.";
+        }
+    }
+
+    private async Task LoadSnapshotsAsync()
+    {
+        if (string.IsNullOrEmpty(_repoPath))
+        {
+            return;
+        }
+
+        var dbPath = Path.Combine(_repoPath, "catalog.db");
         if (!File.Exists(dbPath))
         {
+            _error = "Bu yolda bir depo bulunamadı.";
             return;
         }
 
@@ -91,50 +367,102 @@
         _snapshots = (await db.Snapshots.AsNoTracking().ToListAsync())
             .OrderByDescending(s => s.StartedAtUtc)
             .ToList();
+
+        _sourcePathsBySnapshot = (await db.SnapshotPaths.AsNoTracking().ToListAsync())
+            .GroupBy(p => p.SnapshotId)
+            .ToDictionary(g => g.Key, g => g.Select(p => p.SourcePath).ToList());
+    }
+
+    /// <summary>
+    /// Entry point for "Bu yedeğe dön" from the snapshot list: preselects the
+    /// repository, snapshot and mode, and skips the steps that are already
+    /// answered when the repository opens without a password.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        if (string.IsNullOrEmpty(RepoQuery) || !Options.Value.Repositories.Contains(RepoQuery))
+        {
+            return;
+        }
+
+        _repoPath = RepoQuery;
+        await OnRepoChangedAsync();
+
+        if (_masterKey is null || string.IsNullOrEmpty(SnapshotQuery))
+        {
+            return;
+        }
+
+        if (_snapshots?.Any(s => s.SnapshotId == SnapshotQuery) != true)
+        {
+            _error = "Bağlantıdaki snapshot bu depoda bulunamadı.";
+            return;
+        }
+
+        _snapshotId = SnapshotQuery;
+        SetMode(ModeQuery == "inplace");
+        _step = 3;
     }
 
     private async Task RunRestoreAsync()
     {
-        if (string.IsNullOrEmpty(_form.RepoPath) || string.IsNullOrEmpty(_form.SnapshotId) || string.IsNullOrEmpty(_form.Target))
+        if (string.IsNullOrEmpty(_repoPath) || _masterKey is null)
         {
-            AppendLog("Depo, snapshot ve hedef dizin zorunludur.");
             return;
         }
 
         _running = true;
+        _error = null;
         _log.Clear();
-        AppendLog($"Geri yükleme başlıyor: {_form.SnapshotId} → {_form.Target}");
+        Log("Bilgi", $"Geri yükleme başlıyor: {_snapshotId[..8]} → {(_inPlace ? "orijinal konum" : _target)}");
 
-        byte[]? masterKey = null;
         try
         {
-            masterKey = UnattendedKeyStore.IsEnabled(_form.RepoPath)
-                ? UnattendedKeyStore.Unlock(_form.RepoPath)
-                : await RepositoryKeyStore.UnlockAsync(_form.RepoPath, _form.Password ?? "");
+            var engine = new RestoreEngine(_repoPath, _masterKey);
 
-            var engine = new RestoreEngine(_form.RepoPath, masterKey);
-            await engine.RestoreAsync(_form.SnapshotId, _form.Target);
-
-            AppendLog("Geri yükleme tamamlandı.");
+            if (_inPlace)
+            {
+                var written = await engine.RestoreInPlaceAsync(_snapshotId, overwritePolicy: _overwrite);
+                Log("Bilgi", $"Yedeğe dönüldü: {string.Join(", ", written)}");
+            }
+            else
+            {
+                await engine.RestoreAsync(_snapshotId, _target, overwritePolicy: _overwrite);
+                Log("Bilgi", "Geri yükleme tamamlandı.");
+            }
         }
         catch (Exception ex)
         {
-            AppendLog($"Hata: {ex.Message}");
+            Log("HATA", ex.Message);
+            _error = "Geri yükleme tamamlanamadı. Ayrıntı kayıtlarda.";
         }
         finally
         {
-            if (masterKey is not null)
-            {
-                CryptographicOperations.ZeroMemory(masterKey);
-            }
-
             _running = false;
         }
     }
 
-    private void AppendLog(string message)
+    private void Log(string level, string message)
     {
-        _log.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+        _log.Add(new LogLine(DateTimeOffset.Now, level, message));
         StateHasChanged();
     }
+
+    private static string OverwriteText(OverwritePolicy policy) => policy switch
+    {
+        OverwritePolicy.Skip => "Var olan dosyalar atlanır",
+        OverwritePolicy.Overwrite => "Var olan dosyaların üzerine yazılır",
+        _ => "Var olan dosya bulunursa işlem durur",
+    };
+
+    private void ClearKey()
+    {
+        if (_masterKey is not null)
+        {
+            CryptographicOperations.ZeroMemory(_masterKey);
+            _masterKey = null;
+        }
+    }
+
+    public void Dispose() => ClearKey();
 }

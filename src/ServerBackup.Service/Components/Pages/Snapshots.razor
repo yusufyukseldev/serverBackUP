@@ -7,136 +7,226 @@
 @using ServerBackup.Data
 @using ServerBackup.Data.Entities
 @using ServerBackup.Engine.Repository
+@using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
+@using ServerBackup.Service.Storage
 @implements IDisposable
 @inject IOptions<ServerBackupOptions> Options
+@inject NavigationManager Nav
+
+<PageHeader Title="Snapshot'lar" />
 
 <div class="sb-content">
-<h1>Snapshot Gezgini</h1>
+    <div class="sb-stack">
+        <div class="sb-row sb-row--wrap">
+            <SbField Label="Depo" For="f-snap-repo" Width="SbFieldWidth.Md">
+                <select class="sb-select" id="f-snap-repo" @bind="_selectedRepo" @bind:after="OnRepoChangedAsync">
+                    <option value="">— depo seçin —</option>
+                    @foreach (var repoPath in Options.Value.Repositories)
+                    {
+                        <option value="@repoPath">@RepoNaming.DisplayName(repoPath)</option>
+                    }
+                </select>
+            </SbField>
+        </div>
 
-<div class="card">
-    <label>Depo</label>
-    <select @bind="_selectedRepo" @bind:after="OnRepoChangedAsync">
-        <option value="">— seçin —</option>
-        @foreach (var repoPath in Options.Value.Repositories)
+        @if (_error is not null)
         {
-            <option value="@repoPath">@repoPath</option>
+            <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="@_error" />
         }
-    </select>
 
-    @if (_selectedRepo is not null && !UnattendedKeyStore.IsEnabled(_selectedRepo) && _masterKey is null)
-    {
-        <label>Parola</label>
-        <input type="password" @bind="_password" />
-        <button @onclick="UnlockAsync">Aç</button>
-    }
-</div>
-
-@if (_error is not null)
-{
-    <p class="badge badge-err">@_error</p>
-}
-
-@if (_snapshots is not null && _selectedSnapshot is null)
-{
-    <table>
-        <thead><tr><th>Snapshot</th><th>Başlangıç</th></tr></thead>
-        <tbody>
-            @foreach (var s in _snapshots)
-            {
-                <tr>
-                    <td><a href="#" @onclick="() => OpenSnapshotAsync(s)" @onclick:preventDefault>@s.SnapshotId</a></td>
-                    <td>@s.StartedAtUtc.ToString("u")</td>
-                </tr>
-            }
-        </tbody>
-    </table>
-}
-
-@if (_selectedSnapshot is not null)
-{
-    <p>
-        <a href="#" @onclick="() => { _selectedSnapshot = null; _pathStack.Clear(); }" @onclick:preventDefault>← Snapshot listesi</a>
-        &nbsp;|&nbsp; @(_pathStack.Count == 0 ? "/" : string.Join("/", _pathStack))
-        @if (_pathStack.Count > 0)
+        @if (string.IsNullOrEmpty(_selectedRepo))
         {
-            <button @onclick="GoUpAsync">Üst Klasör</button>
+            <SbCard Title="Snapshot gezgini" Flush="true">
+                <SbEmptyState Message="Snapshot'ları görüntülemek için yukarıdan bir depo seçin." />
+            </SbCard>
         }
-    </p>
-
-    @if (_currentNodes is not null)
-    {
-        <table>
-            <thead><tr><th></th><th>İsim</th><th>Boyut</th></tr></thead>
-            <tbody>
-                @foreach (var node in _currentNodes.OrderBy(n => n.Name, StringComparer.Ordinal))
+        else if (_masterKey is null)
+        {
+            <SbCard Title="Bu depo parola korumalı">
+                <div class="sb-stack">
+                    <div class="sb-row">
+                        <SbIcon Name="lock" />
+                        <span>Snapshot'ları listelemek için deponun kilidini açın.</span>
+                    </div>
+                    <SbField Label="Depo parolası" For="f-snap-pwd" Width="SbFieldWidth.Md">
+                        <input class="sb-input" type="password" id="f-snap-pwd" @bind="_password" />
+                    </SbField>
+                    <div>
+                        <SbButton Variant="SbButtonVariant.Primary" OnClick="UnlockAsync">Kilidi aç</SbButton>
+                    </div>
+                </div>
+            </SbCard>
+        }
+        else if (_selectedSnapshot is null)
+        {
+            <SbCard Title="@($"{_snapshots?.Count ?? 0} snapshot")" Flush="true">
+                @if (_snapshots is null)
                 {
-                    <tr>
-                        <td><SbIcon Name="@(node.Kind == TreeNodeKind.Directory ? "folder" : "file")" Small="true" /></td>
-                        <td>
-                            @if (node.Kind == TreeNodeKind.Directory && node.SubTreeBlobIdHex is not null)
-                            {
-                                <a href="#" @onclick="() => OpenDirectoryAsync(node)" @onclick:preventDefault>@node.Name</a>
-                            }
-                            else
-                            {
-                                @node.Name
-                            }
-                        </td>
-                        <td>@node.Size.ToString("N0")</td>
-                    </tr>
+                    <div class="sb-card-body"><SbSkeleton /></div>
                 }
-            </tbody>
-        </table>
-    }
-}
+                else if (_snapshots.Count == 0)
+                {
+                    <SbEmptyState Message="Bu depoda henüz snapshot yok. Depolar sayfasından ilk yedeği alabilirsiniz." />
+                }
+                else
+                {
+                    <div class="sb-table-wrap">
+                        <table class="sb-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Tarih</th>
+                                    <th scope="col">Snapshot</th>
+                                    <th scope="col">Kaynaklar</th>
+                                    <th scope="col" class="r">Süre</th>
+                                    <th scope="col"><span class="sb-sr-only">Eylemler</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var s in _snapshots)
+                                {
+                                    <tr>
+                                        <td class="num">@Fmt.DateTime(s.StartedAtUtc)</td>
+                                        <td class="id" title="@s.SnapshotId">@s.SnapshotId[..8]</td>
+                                        <td class="path" title="@SourcePathsOf(s.SnapshotId)">@SourcePathsOf(s.SnapshotId)</td>
+                                        <td class="r num">@DurationOf(s)</td>
+                                        <td class="r">
+                                            <div class="sb-row sb-row--tight">
+                                                <SbButton Size="SbButtonSize.Sm"
+                                                          AriaLabel="@($"{Fmt.DateTime(s.StartedAtUtc)} tarihli snapshot'a gözat")"
+                                                          OnClick="() => OpenSnapshotAsync(s)">Gözat</SbButton>
+                                                <SbButton Size="SbButtonSize.Sm" Icon="restore"
+                                                          AriaLabel="@($"{Fmt.DateTime(s.StartedAtUtc)} tarihli yedeğe dön")"
+                                                          OnClick="() => RevertTo(s)">Bu yedeğe dön</SbButton>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </SbCard>
+        }
+        else
+        {
+            <SbCard Title="@($"Snapshot {_selectedSnapshot.SnapshotId[..8]}")" Flush="true">
+                <HeaderActions>
+                    <SbButton Size="SbButtonSize.Sm" Icon="restore" OnClick="CloseSnapshot">Snapshot listesi</SbButton>
+                </HeaderActions>
+                <ChildContent>
+                    <nav class="sb-picker-crumbs" aria-label="Klasör yolu">
+                        <button type="button" class="sb-crumb" @onclick="() => GoToDepthAsync(0)">/</button>
+                        @for (var i = 0; i < _trail.Count; i++)
+                        {
+                            var depth = i + 1;
+                            <button type="button" class="sb-crumb" @onclick="() => GoToDepthAsync(depth)">@_trail[i].Name</button>
+                        }
+                    </nav>
+
+                    @if (_currentNodes is null)
+                    {
+                        <div class="sb-card-body"><SbSkeleton Rows="3" /></div>
+                    }
+                    else if (_currentNodes.Count == 0)
+                    {
+                        <SbEmptyState Message="Bu klasör boş." />
+                    }
+                    else
+                    {
+                        <div class="sb-table-wrap">
+                            <table class="sb-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col"><span class="sb-sr-only">Tür</span></th>
+                                        <th scope="col">Ad</th>
+                                        <th scope="col" class="r">Boyut</th>
+                                        <th scope="col">Değiştirilme</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var node in SortedNodes)
+                                    {
+                                        var canOpen = node.Kind == TreeNodeKind.Directory && node.SubTreeBlobIdHex is not null;
+                                        <tr class="@(canOpen ? "is-clickable" : "")"
+                                            tabindex="@(canOpen ? 0 : -1)"
+                                            @onclick="() => OpenDirectoryAsync(node)"
+                                            @onkeydown="e => OnNodeKeyDown(e, node)">
+                                            <td><SbIcon Name="@(node.Kind == TreeNodeKind.Directory ? "folder" : "file")" Small="true" /></td>
+                                            <td class="sb-name">@node.Name</td>
+                                            <td class="r num">@(node.Kind == TreeNodeKind.Directory ? "—" : Fmt.Bytes(node.Size))</td>
+                                            <td class="num">@Fmt.DateTime(DateTimeOffset.FromFileTime(node.ModifiedAtFileTimeUtc))</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </ChildContent>
+            </SbCard>
+        }
+    </div>
 </div>
 
 @code {
+    private sealed record Crumb(string Name, string TreeBlobIdHex);
+
     private string? _selectedRepo;
     private string? _password;
     private byte[]? _masterKey;
-    private BlobStore? _blobStore;
     private string? _error;
 
     private List<SnapshotEntity>? _snapshots;
+    private Dictionary<string, string> _snapshotSources = [];
     private SnapshotEntity? _selectedSnapshot;
-    private readonly List<string> _pathStack = [];
+
+    /// <summary>Each level's tree blob id, so going up is a pop instead of re-walking the tree from the root.</summary>
+    private readonly List<Crumb> _trail = [];
     private List<TreeNode>? _currentNodes;
+
+    private IEnumerable<TreeNode> SortedNodes => (_currentNodes ?? [])
+        .OrderByDescending(n => n.Kind == TreeNodeKind.Directory)
+        .ThenBy(n => n.Name, StringComparer.CurrentCultureIgnoreCase);
 
     private async Task OnRepoChangedAsync()
     {
         _error = null;
         _snapshots = null;
         _selectedSnapshot = null;
-        _pathStack.Clear();
-        _masterKey = null;
-        _blobStore?.Dispose();
-        _blobStore = null;
+        _trail.Clear();
+        _currentNodes = null;
+        ClearKey();
 
         if (string.IsNullOrEmpty(_selectedRepo))
         {
             return;
         }
 
+        if (!File.Exists(Path.Combine(_selectedRepo, "catalog.db")))
+        {
+            _error = "Bu yolda bir depo bulunamadı.";
+            return;
+        }
+
         if (UnattendedKeyStore.IsEnabled(_selectedRepo))
         {
             _masterKey = UnattendedKeyStore.Unlock(_selectedRepo);
+            await LoadSnapshotsAsync();
         }
-
-        await LoadSnapshotsAsync();
     }
 
     private async Task UnlockAsync()
     {
-        if (_selectedRepo is null || _password is null)
+        if (string.IsNullOrEmpty(_selectedRepo) || string.IsNullOrEmpty(_password))
         {
+            _error = "Depo parolasını girin.";
             return;
         }
 
         try
         {
             _masterKey = await RepositoryKeyStore.UnlockAsync(_selectedRepo, _password);
+            _password = null;
             _error = null;
             await LoadSnapshotsAsync();
         }
@@ -157,53 +247,74 @@
         _snapshots = (await db.Snapshots.AsNoTracking().ToListAsync())
             .OrderByDescending(s => s.StartedAtUtc)
             .ToList();
+
+        var paths = await db.SnapshotPaths.AsNoTracking().ToListAsync();
+        _snapshotSources = paths
+            .GroupBy(p => p.SnapshotId)
+            .ToDictionary(g => g.Key, g => string.Join(", ", g.Select(p => p.SourcePath)));
     }
+
+    private string SourcePathsOf(string snapshotId) =>
+        _snapshotSources.TryGetValue(snapshotId, out var value) ? value : "—";
+
+    private static string DurationOf(SnapshotEntity snapshot) =>
+        snapshot.FinishedAtUtc is { } finished ? Fmt.Duration(finished - snapshot.StartedAtUtc) : "—";
 
     private async Task OpenSnapshotAsync(SnapshotEntity snapshot)
     {
-        if (_selectedRepo is null || _masterKey is null)
-        {
-            return;
-        }
-
         _selectedSnapshot = snapshot;
-        _pathStack.Clear();
+        _trail.Clear();
+        _currentNodes = null;
         await LoadNodesAsync(snapshot.RootTreeBlobId);
+    }
+
+    /// <summary>
+    /// Hands off to the restore wizard rather than starting anything here: the
+    /// confirmation for overwriting live files belongs on one page, not two.
+    /// </summary>
+    private void RevertTo(SnapshotEntity snapshot) =>
+        Nav.NavigateTo($"restore?repo={Uri.EscapeDataString(_selectedRepo ?? "")}&snapshot={snapshot.SnapshotId}&mode=inplace");
+
+    private void CloseSnapshot()
+    {
+        _selectedSnapshot = null;
+        _trail.Clear();
+        _currentNodes = null;
     }
 
     private async Task OpenDirectoryAsync(TreeNode node)
     {
-        if (node.SubTreeBlobIdHex is null)
+        if (node.Kind != TreeNodeKind.Directory || node.SubTreeBlobIdHex is null)
         {
             return;
         }
 
-        _pathStack.Add(node.Name);
+        _trail.Add(new Crumb(node.Name, node.SubTreeBlobIdHex));
         await LoadNodesAsync(node.SubTreeBlobIdHex);
     }
 
-    private async Task GoUpAsync()
+    private async Task GoToDepthAsync(int depth)
     {
-        if (_selectedSnapshot is null || _selectedRepo is null || _masterKey is null)
+        if (_selectedSnapshot is null || depth > _trail.Count)
         {
             return;
         }
 
-        _pathStack.RemoveAt(_pathStack.Count - 1);
+        var treeBlobId = depth == 0 ? _selectedSnapshot.RootTreeBlobId : _trail[depth - 1].TreeBlobIdHex;
+        _trail.RemoveRange(depth, _trail.Count - depth);
+        await LoadNodesAsync(treeBlobId);
+    }
 
-        var treeBlobIdHex = _selectedSnapshot.RootTreeBlobId;
-        var packSubKey = SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo);
-        using var blobStore = new BlobStore(_selectedRepo, packSubKey, CatalogDbContextFactory.Create(Path.Combine(_selectedRepo, "catalog.db")));
-
-        foreach (var segment in _pathStack)
+    private async Task OnNodeKeyDown(KeyboardEventArgs e, TreeNode node)
+    {
+        if (e.Key is "Enter" or " " or "ArrowRight")
         {
-            var bytes = await blobStore.ReadBlobAsync(treeBlobIdHex);
-            var tree = Tree.Deserialize(bytes);
-            var match = tree.Nodes.First(n => n.Name == segment);
-            treeBlobIdHex = match.SubTreeBlobIdHex!;
+            await OpenDirectoryAsync(node);
         }
-
-        await LoadNodesAsync(treeBlobIdHex);
+        else if (e.Key is "Backspace" or "ArrowLeft" && _trail.Count > 0)
+        {
+            await GoToDepthAsync(_trail.Count - 1);
+        }
     }
 
     private async Task LoadNodesAsync(string treeBlobIdHex)
@@ -213,21 +324,31 @@
             return;
         }
 
-        var packSubKey = SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo);
-        await using var db = CatalogDbContextFactory.Create(Path.Combine(_selectedRepo, "catalog.db"));
-        using var blobStore = new BlobStore(_selectedRepo, packSubKey, db);
+        try
+        {
+            var packSubKey = SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo);
+            await using var db = CatalogDbContextFactory.Create(Path.Combine(_selectedRepo, "catalog.db"));
+            using var blobStore = new BlobStore(_selectedRepo, packSubKey, db);
 
-        var bytes = await blobStore.ReadBlobAsync(treeBlobIdHex);
-        var tree = Tree.Deserialize(bytes);
-        _currentNodes = tree.Nodes.ToList();
+            var bytes = await blobStore.ReadBlobAsync(treeBlobIdHex);
+            _currentNodes = Tree.Deserialize(bytes).Nodes.ToList();
+            _error = null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or CryptographicException)
+        {
+            _currentNodes = [];
+            _error = "Bu klasör okunamadı; depo bozulmuş olabilir. Depolar sayfasından doğrulama çalıştırın.";
+        }
     }
 
-    public void Dispose()
+    private void ClearKey()
     {
-        _blobStore?.Dispose();
         if (_masterKey is not null)
         {
             CryptographicOperations.ZeroMemory(_masterKey);
+            _masterKey = null;
         }
     }
+
+    public void Dispose() => ClearKey();
 }

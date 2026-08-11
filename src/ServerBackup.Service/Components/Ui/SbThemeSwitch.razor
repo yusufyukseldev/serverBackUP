@@ -1,0 +1,49 @@
+@inject IJSRuntime JS
+
+<div class="sb-theme">
+    <span class="sb-theme-label" id="sb-theme-label">Görünüm</span>
+    <div class="sb-theme-btns" role="group" aria-labelledby="sb-theme-label">
+        @* aria-pressed is a tri-state: binding a bool would render it valueless, which is invalid. *@
+        @foreach (var choice in Choices)
+        {
+            <button type="button"
+                    class="sb-theme-btn @(_current == choice.Value ? "is-active" : "")"
+                    aria-pressed="@(_current == choice.Value ? "true" : "false")"
+                    title="@choice.Title"
+                    @onclick="() => SetAsync(choice.Value)">
+                <SbIcon Name="@choice.Icon" Small="true" />
+                <span class="sb-sr-only">@choice.Title</span>
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    private sealed record Choice(string Value, string Icon, string Title);
+
+    private static readonly Choice[] Choices =
+    [
+        new("system", "monitor", "Sistem ayarını kullan"),
+        new("light", "sun", "Açık tema"),
+        new("dark", "moon", "Koyu tema"),
+    ];
+
+    /// <summary>Unknown until the first interop call — the preference lives in the browser, not on the server.</summary>
+    private string? _current;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _current = await JS.InvokeAsync<string>("sbTheme.get");
+        StateHasChanged();
+    }
+
+    private async Task SetAsync(string value)
+    {
+        _current = await JS.InvokeAsync<string>("sbTheme.set", value);
+    }
+}

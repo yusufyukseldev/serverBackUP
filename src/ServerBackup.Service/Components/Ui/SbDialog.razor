@@ -1,12 +1,17 @@
+@* design-system.md B9/§11 — Esc kapatır, odak diyaloğun içinde başlar, başlık
+   diyaloğa aria-labelledby ile bağlıdır. Yıkıcı diyaloglarda dış tık kapatmaz;
+   bu bileşen yıkıcı olmayan formlar için, dış tık kapatır. *@
 @if (Open)
 {
-    <div class="sb-overlay">
-        <div class="sb-dialog @(Size == SbDialogSize.Sm ? "sb-dialog--sm" : "")">
+    <div class="sb-overlay" @onclick="OnClose" @onkeydown="OnKeyDown" @onkeydown:stopPropagation tabindex="-1">
+        <div class="sb-dialog @(Size == SbDialogSize.Sm ? "sb-dialog--sm" : "")"
+             role="dialog" aria-modal="true" aria-labelledby="@TitleId" aria-describedby="@DescriptionId"
+             @onclick:stopPropagation @ref="_dialog" tabindex="-1">
             <div class="sb-dialog-head">
-                <h3>@Title</h3>
+                <h3 id="@TitleId">@Title</h3>
                 @if (Description is not null)
                 {
-                    <p>@Description</p>
+                    <p id="@DescriptionId">@Description</p>
                 }
             </div>
             <div class="sb-dialog-body">
@@ -40,4 +45,29 @@
 
     [Parameter]
     public RenderFragment? ChildContent { get; set; }
+
+    private readonly string _uid = $"d{Guid.NewGuid():n}"[..9];
+    private ElementReference _dialog;
+    private bool _wasOpen;
+
+    private string TitleId => $"{_uid}-t";
+    private string? DescriptionId => Description is null ? null : $"{_uid}-d";
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await OnClose.InvokeAsync();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Open && !_wasOpen)
+        {
+            await _dialog.FocusAsync();
+        }
+
+        _wasOpen = Open;
+    }
 }
