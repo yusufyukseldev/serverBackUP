@@ -12,7 +12,7 @@
 .sb-table th {
   text-align: left; font-size: 12px; font-weight: 500; letter-spacing: .01em;
   color: var(--text-secondary); padding: 8px var(--space-3);
-  border-bottom: 1px solid var(--border-strong); background: var(--surface);
+  border-bottom: 1px solid var(--border-strong); background: var(--surface-sunken);
   position: sticky; top: 0; z-index: 1; white-space: nowrap;
 }
 .sb-table td { padding: var(--row-py) var(--space-3); border-bottom: 1px solid var(--border-subtle); height: var(--row-h); vertical-align: middle; }
@@ -200,7 +200,7 @@
 /* --- Canlı önizleme (zamanlama, saklama) --- */
 .sb-preview {
   border: 1px solid var(--border); border-left: 2px solid var(--accent);
-  border-radius: var(--radius-sm); background: var(--canvas);
+  border-radius: var(--radius-sm); background: var(--surface-sunken);
   padding: var(--space-3); display: flex; flex-direction: column; gap: 3px;
 }
 .sb-preview-t { font-size: 13px; font-weight: 500; color: var(--text-strong); }
@@ -276,7 +276,7 @@
 .sb-prog-text { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 /* --- Log konsolu --- */
-.sb-log { background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 12.5px; line-height: 19px; max-height: 360px; overflow: auto; padding: 8px 10px; }
+.sb-log { background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 12.5px; line-height: 19px; max-height: 360px; overflow: auto; padding: 8px 10px; }
 .sb-log div { white-space: pre-wrap; }
 .sb-log time { color: var(--text-muted); }
 .sb-log .lv-err  { color: var(--danger); }
@@ -334,7 +334,7 @@
 }
 .sb-picker-bar {
   display: flex; align-items: center; gap: var(--space-2);
-  padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); background: var(--canvas);
+  padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-sunken);
 }
 .sb-picker-drives { display: flex; gap: 4px; flex: none; }
 .sb-drive {

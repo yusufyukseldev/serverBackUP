@@ -91,23 +91,27 @@ gelir; vurgu rengi karakter taşımaz, sadece eylem işaretler.
 
 | Token | Koyu | Açık | Kullanım |
 |---|---|---|---|
-| `--sidebar` | `#07090C` | `#EFF1F5` | Kenar çubuğu — **en derin katman** |
-| `--canvas` | `#0C0F13` | `#F7F8FA` | İçerik zemini |
-| `--surface` | `#151920` | `#FFFFFF` | Kart, panel, tablo başlığı |
-| `--surface-hover` | `#1B2029` | `#F1F3F6` | Satır/öğe hover |
+| `--sidebar` | `#07090C` | `#E7EBF0` | Kenar çubuğu — **en derin katman** |
+| `--canvas` | `#0C0F13` | `#EFF2F5` | İçerik zemini |
+| `--surface` | `#151920` | `#FFFFFF` | Kart, panel |
+| `--surface-sunken` | `#10141A` | `#F3F5F8` | Kart içindeki çökük şerit: tablo başlığı, log, önizleme |
+| `--surface-hover` | `#1B2029` | `#EEF1F5` | Satır/öğe hover |
 | `--surface-raised` | `#1E242D` | `#FFFFFF` | Popover, dropdown, modal |
-| `--border-subtle` | `#1E232B` | `#ECEEF1` | Tablo satır ayracı |
-| `--border` | `#2A3039` | `#DDE1E6` | Kart, input kenarı |
-| `--border-strong` | `#3A424E` | `#C3C9D1` | Bölüm ayracı, tablo başlık altı |
-| `--text-muted` | `#6B7480` | `#8A929C` | Üçüncül; asla tek başına anlam taşımaz |
-| `--text-secondary` | `#98A2AF` | `#5C6570` | Etiket, meta, tablo başlığı |
-| `--text` | `#E4E8ED` | `#1C2126` | Gövde metni |
-| `--text-strong` | `#F5F7FA` | `#0D1114` | Başlık, metrik değeri |
+| `--border-subtle` | `#1E232B` | `#E3E7EC` | Tablo satır ayracı |
+| `--border` | `#2A3039` | `#CFD5DD` | Kart, input kenarı |
+| `--border-strong` | `#3A424E` | `#ADB6C1` | Bölüm ayracı, tablo başlık altı |
+| `--text-muted` | `#6B7480` | `#79818C` | Üçüncül; asla tek başına anlam taşımaz |
+| `--text-secondary` | `#98A2AF` | `#55606B` | Etiket, meta, tablo başlığı |
+| `--text` | `#E4E8ED` | `#1A1F25` | Gövde metni |
+| `--text-strong` | `#F5F7FA` | `#0B0F13` | Başlık, metrik değeri |
 
-Doğrulanmış kontrastlar (koyu tema): `--text` / `--surface` = **14,3:1**;
+Doğrulanmış kontrastlar — koyu tema: `--text` / `--surface` = **14,3:1**;
 `--text-secondary` / `--sidebar` = **7,7:1**; `--text-muted` / `--surface` =
-**3,7:1**. Açık tema karşılıkları uygulama sırasında ölçülüp bu tabloya
-yazılacak.
+**3,7:1**. Açık tema: sırasıyla **16,6:1**, **5,3:1**, **3,9:1**.
+
+Açık temada katmanlar gölgeyle değil zeminin bir kademe koyulaşmasıyla ayrılır
+(`sidebar < canvas < sunken < surface`); ilk sürümde canvas beyaza fazla
+yakındı ve kart/zemin ayrımı yalnızca 1px kenarlığa kalıyordu.
 
 **Üç kademeli derinlik.** Kenar çubuğu zeminden koyu, kart zeminden açıktır:
 `sidebar < canvas < surface`. Bu, gölge kullanmadan katman hissi üretir ve

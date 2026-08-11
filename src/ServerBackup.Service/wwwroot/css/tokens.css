@@ -1,17 +1,22 @@
+/* Açık temada katmanlar §5.3'teki gibi gölgeyle değil, zeminin bir kademe
+   koyulaşmasıyla ayrılır: sidebar < canvas < sunken < surface. Beyaz kart
+   beyaz zemine oturduğunda tek ayrım 1px kenarlık kalıyordu ve sayfa tek
+   parça beyaz görünüyordu. */
 :root {
   /* Nötr — AÇIK tema (taban) */
-  --sidebar:       #EFF1F5;
-  --canvas:        #F7F8FA;
+  --sidebar:       #E7EBF0;
+  --canvas:        #EFF2F5;
   --surface:       #FFFFFF;
-  --surface-hover: #F1F3F6;
+  --surface-sunken:#F3F5F8;
+  --surface-hover: #EEF1F5;
   --surface-raised:#FFFFFF;
-  --border-subtle: #ECEEF1;
-  --border:        #DDE1E6;
-  --border-strong: #C3C9D1;
-  --text-muted:    #8A929C;
-  --text-secondary:#5C6570;
-  --text:          #1C2126;
-  --text-strong:   #0D1114;
+  --border-subtle: #E3E7EC;
+  --border:        #CFD5DD;
+  --border-strong: #ADB6C1;
+  --text-muted:    #79818C;
+  --text-secondary:#55606B;
+  --text:          #1A1F25;
+  --text-strong:   #0B0F13;
 
   --accent:        #2563C9;
   --accent-bg:     rgba(37,99,201,.10);
@@ -60,6 +65,7 @@
     --sidebar:       #07090C;
     --canvas:        #0C0F13;
     --surface:       #151920;
+    --surface-sunken:#10141A;
     --surface-hover: #1B2029;
     --surface-raised:#1E242D;
     --border-subtle: #1E232B;
@@ -91,7 +97,7 @@
   }
 }
 :root[data-theme="dark"] {
-  --sidebar:#07090C; --canvas:#0C0F13; --surface:#151920; --surface-hover:#1B2029; --surface-raised:#1E242D;
+  --sidebar:#07090C; --canvas:#0C0F13; --surface:#151920; --surface-sunken:#10141A; --surface-hover:#1B2029; --surface-raised:#1E242D;
   --border-subtle:#1E232B; --border:#2A3039; --border-strong:#3A424E;
   --text-muted:#6B7480; --text-secondary:#98A2AF; --text:#E4E8ED; --text-strong:#F5F7FA;
   --accent:#5B93F5; --accent-bg:rgba(91,147,245,.13); --accent-border:rgba(91,147,245,.32); --on-accent:#0B0D10;
@@ -101,9 +107,9 @@
   --shadow-2:none; --shadow-3:none; --overlay:rgba(0,0,0,.55);
 }
 :root[data-theme="light"] {
-  --sidebar:#EFF1F5; --canvas:#F7F8FA; --surface:#FFFFFF; --surface-hover:#F1F3F6; --surface-raised:#FFFFFF;
-  --border-subtle:#ECEEF1; --border:#DDE1E6; --border-strong:#C3C9D1;
-  --text-muted:#8A929C; --text-secondary:#5C6570; --text:#1C2126; --text-strong:#0D1114;
+  --sidebar:#E7EBF0; --canvas:#EFF2F5; --surface:#FFFFFF; --surface-sunken:#F3F5F8; --surface-hover:#EEF1F5; --surface-raised:#FFFFFF;
+  --border-subtle:#E3E7EC; --border:#CFD5DD; --border-strong:#ADB6C1;
+  --text-muted:#79818C; --text-secondary:#55606B; --text:#1A1F25; --text-strong:#0B0F13;
   --accent:#2563C9; --accent-bg:rgba(37,99,201,.10); --accent-border:rgba(37,99,201,.30); --on-accent:#FFFFFF;
   --success:#1A7F37; --success-bg:rgba(26,127,55,.10); --success-border:rgba(26,127,55,.28);
   --warning:#9A6700; --warning-bg:rgba(154,103,0,.10); --warning-border:rgba(154,103,0,.28);
