@@ -119,9 +119,12 @@
                         }
                         else
                         {
-                            <SbField Label="Hedef dizin" For="f-res-target" Hint="Snapshot bu dizinin altına yazılır.">
+                            <SbField Label="Hedef dizin" For="f-res-target"
+                                     Hint="Snapshot bu dizinin altına yazılır. Aşağıdan seçebilir, sonuna yeni bir klasör adı ekleyebilirsiniz — olmayan klasör oluşturulur.">
                                 <input class="sb-input sb-input--mono" id="f-res-target" @bind="_target" placeholder="D:\Geri" />
                             </SbField>
+
+                            <SbPathPicker Single="true" Paths="TargetPaths" PathsChanged="OnTargetPicked" />
                         }
                         break;
 
@@ -273,6 +276,16 @@
     private List<string> SourcePaths => _snapshotId.Length > 0 && _sourcePathsBySnapshot.TryGetValue(_snapshotId, out var paths)
         ? paths
         : [];
+
+    /// <summary>
+    /// The picker owns a list, the wizard owns one target string. The typed box
+    /// stays authoritative so a folder that does not exist yet can still be
+    /// named — the picker only fills it in.
+    /// </summary>
+    private IReadOnlyList<string> TargetPaths =>
+        string.IsNullOrWhiteSpace(_target) ? [] : [_target];
+
+    private void OnTargetPicked(IReadOnlyList<string> paths) => _target = paths.Count == 0 ? "" : paths[0];
 
     private string? SelectedSnapshotDate =>
         _snapshots?.FirstOrDefault(s => s.SnapshotId == _snapshotId) is { } s ? Fmt.DateTime(s.StartedAtUtc) : "—";

@@ -5,7 +5,7 @@
     <div class="sb-picker-chosen">
         @if (Paths.Count == 0)
         {
-            <p class="sb-hint">Henüz kaynak yol seçilmedi.</p>
+            <p class="sb-hint">@(Single ? "Henüz klasör seçilmedi." : "Henüz kaynak yol seçilmedi.")</p>
         }
         else
         {
@@ -51,12 +51,12 @@
                     }
                 </nav>
 
-                <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Primary" Icon="plus"
+                <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Primary" Icon="@(Single ? "check" : "plus")"
                           OnClick="() => AddAsync(_current)"
-                          AriaLabel="@($"{_current} yolunu kaynak yollara ekle")"
+                          AriaLabel="@AddLabel(_current)"
                           Disabled="@Paths.Contains(_current)"
-                          DisabledReason="@(Paths.Contains(_current) ? "Bu yol zaten listede" : null)">
-                    @(IsDriveRoot(_current) ? "Diskin tamamı" : "Bu klasör")
+                          DisabledReason="@(Paths.Contains(_current) ? (Single ? "Bu klasör zaten seçili" : "Bu yol zaten listede") : null)">
+                    @(Single ? "Bu klasörü seç" : IsDriveRoot(_current) ? "Diskin tamamı" : "Bu klasör")
                 </SbButton>
             }
         </div>
@@ -79,11 +79,11 @@
                         </button>
                         @* Her satırda çıplak "Ekle" ekran okuyucuda ayırt edilemez — ad klasörü söylemeli. *@
                         <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Subtle"
-                                  AriaLabel="@($"{Path.GetFileName(child)} klasörünü kaynak yollara ekle")"
+                                  AriaLabel="@AddLabel(child)"
                                   OnClick="() => AddAsync(child)"
                                   Disabled="@Paths.Contains(child)"
-                                  DisabledReason="@(Paths.Contains(child) ? "Bu yol zaten listede" : null)">
-                            Ekle
+                                  DisabledReason="@(Paths.Contains(child) ? (Single ? "Bu klasör zaten seçili" : "Bu yol zaten listede") : null)">
+                            @(Single ? "Seç" : "Ekle")
                         </SbButton>
                     </li>
                 }
@@ -100,6 +100,10 @@
     [Parameter, EditorRequired]
     public EventCallback<IReadOnlyList<string>> PathsChanged { get; set; }
 
+    /// <summary>One folder instead of a set — picking replaces the selection rather than appending to it.</summary>
+    [Parameter]
+    public bool Single { get; set; }
+
     private IReadOnlyList<FileSystemBrowser.DriveItem> _drives = [];
     private IReadOnlyList<string> _children = [];
     private string? _current;
@@ -107,9 +111,13 @@
     protected override void OnInitialized()
     {
         _drives = FileSystemBrowser.GetFixedDrives();
-        if (_drives.Count > 0)
+
+        // Reopening a picker that already has a choice on the volume's root
+        // would make the operator navigate back to it every time.
+        var start = Paths.LastOrDefault(FileSystemBrowser.DirectoryExists) ?? _drives.FirstOrDefault()?.RootPath;
+        if (start is not null)
         {
-            Browse(_drives[0].RootPath);
+            Browse(start);
         }
     }
 
@@ -119,8 +127,13 @@
         _children = FileSystemBrowser.GetSubdirectories(path);
     }
 
-    private Task AddAsync(string path) =>
-        Paths.Contains(path) ? Task.CompletedTask : PathsChanged.InvokeAsync([.. Paths, path]);
+    private Task AddAsync(string path) => Paths.Contains(path)
+        ? Task.CompletedTask
+        : PathsChanged.InvokeAsync(Single ? [path] : [.. Paths, path]);
+
+    private string AddLabel(string path) => Single
+        ? $"{CrumbLabel(path)} klasörünü hedef olarak seç"
+        : $"{path} yolunu kaynak yollara ekle";
 
     private Task RemoveAsync(string path) =>
         PathsChanged.InvokeAsync(Paths.Where(p => p != path).ToList());
@@ -137,6 +150,6 @@
             : path.TrimEnd(Path.DirectorySeparatorChar);
 
     /// <summary>A chip shows the tail of the path; the full path stays in the tooltip.</summary>
-    private static string ShortLabel(string path) =>
-        IsDriveRoot(path) ? $"{path.TrimEnd(Path.DirectorySeparatorChar)} (tüm disk)" : Fmt.TruncatePath(path, 34);
+    private string ShortLabel(string path) =>
+        IsDriveRoot(path) && !Single ? $"{path.TrimEnd(Path.DirectorySeparatorChar)} (tüm disk)" : Fmt.TruncatePath(path, 34);
 }

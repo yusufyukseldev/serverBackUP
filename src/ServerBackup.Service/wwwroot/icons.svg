@@ -22,6 +22,8 @@
     <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.1"/><path d="M8 1.4v1.5M8 13.1v1.5M14.6 8h-1.5M2.9 8H1.4M12.7 3.3l-1.1 1.1M4.4 11.6l-1.1 1.1M12.7 12.7l-1.1-1.1M4.4 4.4 3.3 3.3"/></symbol>
     <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.4 9.6A5.8 5.8 0 0 1 6.4 2.6a5.9 5.9 0 1 0 7 7z"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 16 16"><rect x="1.6" y="2.6" width="12.8" height="8.6" rx="1.4"/><path d="M5.6 14.2h4.8M8 11.2v3"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 16 16"><path d="M11.1 2.3a1.7 1.7 0 0 1 2.4 2.4L5.4 12.8l-3.2.8.8-3.2z"/><path d="m9.9 3.5 2.6 2.6"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.6 4.3h10.8"/><path d="M5.4 4.3V2.9a1 1 0 0 1 1-1h3.2a1 1 0 0 1 1 1v1.4"/><path d="M3.9 4.3h8.2l-.6 8.6a1.2 1.2 0 0 1-1.2 1.1H5.7a1.2 1.2 0 0 1-1.2-1.1z"/></symbol>
     <symbol id="i-list" viewBox="0 0 16 16"><path d="M5.5 4.5h9M5.5 8h9M5.5 11.5h9M2 4.5h.01M2 8h.01M2 11.5h.01"/></symbol>
   </defs>
 </svg>

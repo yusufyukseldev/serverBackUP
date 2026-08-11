@@ -96,4 +96,60 @@ public sealed class CronBuilderTests
 
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
+
+    [Theory]
+    [MemberData(nameof(ValidCombinations))]
+    public void A_built_expression_parses_back_into_the_same_schedule(HashSet<DayOfWeek> days, int start, int end, int interval)
+    {
+        var cron = CronBuilder.Build(days, start, end, interval);
+
+        var schedule = CronBuilder.ParseSimple(cron);
+
+        schedule.Should().NotBeNull();
+        schedule!.Days.Should().BeEquivalentTo(days);
+        CronBuilder.Build(schedule.Days, schedule.StartHour, schedule.EndHour, schedule.IntervalHours)
+            .Should().Be(cron, "reopening a saved plan must not silently change when it runs");
+    }
+
+    [Fact]
+    public void A_fixed_hour_parses_back_as_once_a_day_not_as_hourly()
+    {
+        var schedule = CronBuilder.ParseSimple("0 3 * * *");
+
+        schedule.Should().NotBeNull();
+        schedule!.StartHour.Should().Be(3);
+        schedule.EndHour.Should().Be(3);
+        schedule.IntervalHours.Should().Be(24);
+        schedule.Days.Should().BeEquivalentTo(AllDays);
+    }
+
+    [Fact]
+    public void A_stepped_range_parses_back_field_by_field()
+    {
+        var schedule = CronBuilder.ParseSimple("0 8-20/2 * * 1,2,3,4,5");
+
+        schedule.Should().NotBeNull();
+        schedule!.StartHour.Should().Be(8);
+        schedule.EndHour.Should().Be(20);
+        schedule.IntervalHours.Should().Be(2);
+        schedule.Days.Should().BeEquivalentTo(Weekdays);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("0 3 * *")]              // too few fields
+    [InlineData("30 3 * * *")]           // a minute this builder never emits
+    [InlineData("0 3 1 * *")]            // day-of-month constraint
+    [InlineData("0 3 * 6 *")]            // month constraint
+    [InlineData("0 8-20/2 * * MON-FRI")] // named days
+    [InlineData("0 20-8 * * *")]         // end before start
+    [InlineData("0 8/2 * * *")]          // step without a range
+    [InlineData("0 8-24 * * *")]         // hour out of range
+    [InlineData("0 8-20 * * 7")]         // day out of range
+    public void An_expression_this_builder_could_not_have_produced_is_refused(string? cron)
+    {
+        CronBuilder.ParseSimple(cron).Should().BeNull(
+            "an unrecognised expression must fall back to the cron text box rather than be silently rewritten");
+    }
 }

@@ -73,12 +73,21 @@
                                     <td>@row.RetentionText</td>
                                     <td class="r num">@row.NextRunText</td>
                                     <td class="r">
-                                        <SbButton Size="SbButtonSize.Sm"
-                                                  OnClick="() => BackupNowAsync(row)"
-                                                  Disabled="@(_queuedPlanId == row.Plan.PlanId)"
-                                                  DisabledReason="@(_queuedPlanId == row.Plan.PlanId ? "Bu plan zaten kuyrukta" : null)">
-                                            @(_queuedPlanId == row.Plan.PlanId ? "Kuyrukta" : "Şimdi yedekle")
-                                        </SbButton>
+                                        <div class="sb-row sb-row--tight">
+                                            <SbButton Size="SbButtonSize.Sm"
+                                                      OnClick="() => BackupNowAsync(row)"
+                                                      Disabled="@(_queuedPlanId == row.Plan.PlanId)"
+                                                      DisabledReason="@(_queuedPlanId == row.Plan.PlanId ? "Bu plan zaten kuyrukta" : null)">
+                                                @(_queuedPlanId == row.Plan.PlanId ? "Kuyrukta" : "Şimdi yedekle")
+                                            </SbButton>
+                                            @* İkon tek başına eylemi anlatmaz; ad ekran okuyucuya planı da söylemeli. *@
+                                            <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Subtle" Icon="pencil"
+                                                      AriaLabel="@($"'{row.Plan.Name}' planını düzenle")"
+                                                      OnClick="() => OpenEditDialog(row)" />
+                                            <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Subtle" Icon="trash"
+                                                      AriaLabel="@($"'{row.Plan.Name}' planını sil")"
+                                                      OnClick="() => AskDelete(row)" />
+                                        </div>
                                     </td>
                                 </tr>
                             }
@@ -90,7 +99,8 @@
     </div>
 </div>
 
-<SbDialog Title="Yeni plan" Description="Kaynaklar, zamanlama ve saklama politikası."
+<SbDialog Title="@(_editingPlanId is null ? "Yeni plan" : "Planı düzenle")"
+          Description="Kaynaklar, zamanlama ve saklama politikası."
           Open="_createDialogOpen" OnClose="CloseCreateDialog">
     <ChildContent>
         @* Three short panels instead of one long scroll: the retention rules were
@@ -112,8 +122,11 @@
         @if (_tab == "kaynak")
         {
         <div class="sb-fs">
-            <SbField Label="Depo" For="f-plan-repo">
-                <select class="sb-select" id="f-plan-repo" @bind="_form.RepoPath">
+            @* Deponun değiştirilmesi planı taşımak olurdu; snapshot'ları geride
+               kalacağı için düzenlemede kilitli. *@
+            <SbField Label="Depo" For="f-plan-repo"
+                     Hint="@(_editingPlanId is null ? null : "Var olan bir planın deposu değiştirilemez — snapshot'ları bu depoda duruyor.")">
+                <select class="sb-select" id="f-plan-repo" @bind="_form.RepoPath" disabled="@(_editingPlanId is not null)">
                     @foreach (var repoPath in Options.Value.Repositories)
                     {
                         <option value="@repoPath">@RepoNaming.DisplayName(repoPath) — @repoPath</option>
@@ -252,7 +265,31 @@
     </ChildContent>
     <Footer>
         <SbButton OnClick="CloseCreateDialog">Vazgeç</SbButton>
-        <SbButton Variant="SbButtonVariant.Primary" OnClick="CreatePlanAsync">Plan oluştur</SbButton>
+        <SbButton Variant="SbButtonVariant.Primary" OnClick="SavePlanAsync">
+            @(_editingPlanId is null ? "Plan oluştur" : "Değişiklikleri kaydet")
+        </SbButton>
+    </Footer>
+</SbDialog>
+
+<SbDialog Title="Planı sil" Size="SbDialogSize.Sm"
+          Description="@($"'{_deleteTarget?.Plan.Name}' planı silinecek.")"
+          Open="@(_deleteTarget is not null)" OnClose="() => _deleteTarget = null">
+    <ChildContent>
+        <SbBanner Tone="SbBannerTone.Warn" Icon="alert"
+                  Title="Snapshot'lar silinmez"
+                  Body="Bu planın aldığı yedekler depoda kalır ve geri yüklenebilir. Silinen yalnızca zamanlama: bundan sonra kendiliğinden yedek alınmaz ve bu planın snapshot'ları artık budanmaz." />
+        @if (_deleteTarget is not null)
+        {
+            <dl class="sb-dl">
+                <dt>Depo</dt><dd>@RepoNaming.DisplayName(_deleteTarget.RepoPath)</dd>
+                <dt>Zamanlama</dt><dd>@CronText.Describe(_deleteTarget.Plan.CronSchedule)</dd>
+                <dt>Kaynaklar</dt><dd>@string.Join(", ", _deleteTarget.SourcePaths)</dd>
+            </dl>
+        }
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="() => _deleteTarget = null">Vazgeç</SbButton>
+        <SbButton Variant="SbButtonVariant.Danger" Icon="trash" OnClick="DeletePlanAsync">Planı sil</SbButton>
     </Footer>
 </SbDialog>
 
@@ -322,10 +359,15 @@
         [DayOfWeek.Sunday] = "Paz",
     };
 
+    /// <summary>Interval values the "Sıklık" dropdown offers; anything else has to stay in the cron box.</summary>
+    private static readonly int[] SimpleIntervals = [1, 2, 3, 4, 6, 8, 12, 24];
+
     private List<PlanRow>? _plans;
     private PlanForm _form = new();
     private string _tab = "kaynak";
     private bool _createDialogOpen;
+    private string? _editingPlanId;
+    private PlanRow? _deleteTarget;
     private string? _formError;
     private string? _message;
     private SbBannerTone _messageTone = SbBannerTone.Ok;
@@ -338,7 +380,73 @@
         _form = new PlanForm { RepoPath = Options.Value.Repositories.FirstOrDefault() ?? "" };
         _formError = null;
         _tab = "kaynak";
+        _editingPlanId = null;
         _createDialogOpen = true;
+    }
+
+    private void OpenEditDialog(PlanRow row)
+    {
+        var policy = string.IsNullOrEmpty(row.Plan.RetentionPolicyJson)
+            ? null
+            : JsonSerializer.Deserialize<RetentionPolicy>(row.Plan.RetentionPolicyJson);
+
+        _form = new PlanForm
+        {
+            RepoPath = row.RepoPath,
+            Name = row.Plan.Name,
+            SourcePaths = row.SourcePaths,
+            Cron = row.Plan.CronSchedule ?? "",
+            KeepLast = policy?.KeepLast,
+            KeepDaily = policy?.KeepDaily,
+            KeepWeekly = policy?.KeepWeekly,
+            KeepMonthly = policy?.KeepMonthly,
+            KeepYearly = policy?.KeepYearly,
+            RetentionPreset = PresetIdFor(policy),
+        };
+
+        ApplySchedule(row.Plan.CronSchedule);
+
+        _formError = null;
+        _tab = "kaynak";
+        _editingPlanId = row.Plan.PlanId;
+        _createDialogOpen = true;
+    }
+
+    /// <summary>
+    /// A saved plan is stored as cron. Reopening it in the day/hour form is only
+    /// safe when the expression round-trips exactly; otherwise the operator is
+    /// shown the cron they actually wrote.
+    /// </summary>
+    private void ApplySchedule(string? cron)
+    {
+        var schedule = CronBuilder.ParseSimple(cron);
+        if (schedule is null || !SimpleIntervals.Contains(schedule.IntervalHours))
+        {
+            _form.UseSimpleScheduler = false;
+            return;
+        }
+
+        _form.UseSimpleScheduler = true;
+        _form.SelectedDays = [.. schedule.Days];
+        _form.StartHour = schedule.StartHour;
+        _form.EndHour = schedule.EndHour;
+        _form.IntervalHours = schedule.IntervalHours;
+    }
+
+    /// <summary>Matches a stored policy back to a preset so editing doesn't drop everyone into "Özel".</summary>
+    private static string PresetIdFor(RetentionPolicy? policy)
+    {
+        if (policy is null)
+        {
+            return "yok";
+        }
+
+        var match = RetentionPresets.FirstOrDefault(p =>
+            p.Id != "ozel"
+            && p.Last == policy.KeepLast && p.Daily == policy.KeepDaily && p.Weekly == policy.KeepWeekly
+            && p.Monthly == policy.KeepMonthly && p.Yearly == policy.KeepYearly);
+
+        return match?.Id ?? "ozel";
     }
 
     /// <summary>Each tab header carries its own state so nothing has to be opened to be checked.</summary>
@@ -383,7 +491,11 @@
             : null;
     }
 
-    private void CloseCreateDialog() => _createDialogOpen = false;
+    private void CloseCreateDialog()
+    {
+        _createDialogOpen = false;
+        _editingPlanId = null;
+    }
 
     private void ToggleDay(DayOfWeek day, bool selected)
     {
@@ -555,7 +667,7 @@
         _message = $"'{row.Plan.Name}' kuyruğa alındı. İlerlemeyi İş geçmişi sayfasından izleyebilirsiniz.";
     }
 
-    private async Task CreatePlanAsync()
+    private async Task SavePlanAsync()
     {
         _formError = null;
 
@@ -598,22 +710,76 @@
         }
 
         var retentionJson = BuildRetentionJson();
+        var sourcePathsJson = JsonSerializer.Serialize(_form.SourcePaths);
 
         await using var db = CatalogDbContextFactory.Create(Path.Combine(_form.RepoPath, "catalog.db"));
-        db.Plans.Add(new PlanEntity
+
+        if (_editingPlanId is null)
         {
-            PlanId = Guid.NewGuid().ToString("n"),
-            Name = _form.Name,
-            SourcePathsJson = JsonSerializer.Serialize(_form.SourcePaths),
-            CronSchedule = cron,
-            RetentionPolicyJson = retentionJson,
-            CreatedAtUtc = DateTimeOffset.UtcNow,
-        });
+            db.Plans.Add(new PlanEntity
+            {
+                PlanId = Guid.NewGuid().ToString("n"),
+                Name = _form.Name,
+                SourcePathsJson = sourcePathsJson,
+                CronSchedule = cron,
+                RetentionPolicyJson = retentionJson,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+            });
+        }
+        else
+        {
+            var plan = await db.Plans.FirstOrDefaultAsync(p => p.PlanId == _editingPlanId);
+            if (plan is null)
+            {
+                (_tab, _formError) = ("kaynak", "Bu plan artık depoda yok; başka bir yerden silinmiş olabilir.");
+                return;
+            }
+
+            // PlanId stays put: snapshots and job history reference it, and a
+            // new id would orphan this plan's entire past.
+            plan.Name = _form.Name;
+            plan.SourcePathsJson = sourcePathsJson;
+            plan.CronSchedule = cron;
+            plan.RetentionPolicyJson = retentionJson;
+        }
+
         await db.SaveChangesAsync();
 
+        var wasEditing = _editingPlanId is not null;
         _createDialogOpen = false;
+        _editingPlanId = null;
         _messageTone = SbBannerTone.Ok;
-        _message = $"'{_form.Name}' planı oluşturuldu.";
+        _message = wasEditing ? $"'{_form.Name}' planı güncellendi." : $"'{_form.Name}' planı oluşturuldu.";
+        await LoadPlansAsync();
+    }
+
+    private void AskDelete(PlanRow row)
+    {
+        _message = null;
+        _deleteTarget = row;
+    }
+
+    private async Task DeletePlanAsync()
+    {
+        if (_deleteTarget is null)
+        {
+            return;
+        }
+
+        var row = _deleteTarget;
+        _deleteTarget = null;
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(row.RepoPath, "catalog.db"));
+
+        // Snapshots and jobs keep their PlanId on purpose: the backups this plan
+        // took stay listed and restorable, they just stop being scheduled.
+        var deleted = await db.Plans.Where(p => p.PlanId == row.Plan.PlanId).ExecuteDeleteAsync();
+
+        _messageTone = deleted > 0 ? SbBannerTone.Ok : SbBannerTone.Warn;
+        _message = deleted > 0
+            ? $"'{row.Plan.Name}' planı silindi. Aldığı snapshot'lar depoda duruyor."
+            : $"'{row.Plan.Name}' planı zaten silinmişti.";
+
         await LoadPlansAsync();
     }
 }
