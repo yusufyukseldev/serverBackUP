@@ -376,6 +376,19 @@ public sealed class BackupEngine
             return cached;
         }
 
+        if (entry.IsCloudPlaceholder)
+        {
+            // A cloud-sync placeholder (OneDrive Files On-Demand, etc.) whose
+            // content isn't on local disk. Reading it would block synchronously
+            // until the OS hydrates it from the cloud — potentially forever on a
+            // slow connection or signed-out account — so it's skipped the same
+            // way a locked file is, rather than risking the whole run hanging.
+            counters.VisitedFileRelativePaths.Remove(relativePath);
+            RecordSkip(counters, entry.FullPath, new IOException("Cloud-only placeholder file (not hydrated locally)."));
+            ReportProgress(counters);
+            return null;
+        }
+
         Stream stream;
         try
         {

@@ -9,6 +9,19 @@ namespace ServerBackup.Engine.Scanning;
 /// </summary>
 public sealed class LocalSourceProvider : ISourceProvider
 {
+    // Not in System.IO.FileAttributes, but GetAttributes/EnumerateFileSystemInfos
+    // still return the raw Win32 DWORD, so the bits are present even without a
+    // named enum member. Cloud-sync providers (OneDrive Files On-Demand, etc.)
+    // set these on placeholder files whose content isn't actually on disk yet —
+    // reading one blocks synchronously until the OS hydrates it from the cloud,
+    // which can hang a backup indefinitely on a slow connection or signed-out
+    // account. See https://learn.microsoft.com/windows/win32/fileio/file-attribute-constants.
+    private const int FileAttributeRecallOnOpen = 0x00040000;
+    private const int FileAttributeRecallOnDataAccess = 0x00400000;
+
+    private static bool IsCloudPlaceholder(FileAttributes attributes) =>
+        ((int)attributes & (FileAttributeRecallOnOpen | FileAttributeRecallOnDataAccess)) != 0;
+
     public SourceEntry GetEntry(string path)
     {
         var attributes = File.GetAttributes(path);
@@ -25,7 +38,8 @@ public sealed class LocalSourceProvider : ISourceProvider
                 Size: 0,
                 LastWriteTimeUtc: info.LastWriteTimeUtc,
                 Attributes: attributes,
-                IsReparsePoint: isReparsePoint);
+                IsReparsePoint: isReparsePoint,
+                IsCloudPlaceholder: IsCloudPlaceholder(attributes));
         }
         else
         {
@@ -37,7 +51,8 @@ public sealed class LocalSourceProvider : ISourceProvider
                 Size: info.Length,
                 LastWriteTimeUtc: info.LastWriteTimeUtc,
                 Attributes: attributes,
-                IsReparsePoint: isReparsePoint);
+                IsReparsePoint: isReparsePoint,
+                IsCloudPlaceholder: IsCloudPlaceholder(attributes));
         }
     }
 
@@ -54,7 +69,8 @@ public sealed class LocalSourceProvider : ISourceProvider
                 Size: isDirectory ? 0 : ((FileInfo)entry).Length,
                 LastWriteTimeUtc: entry.LastWriteTimeUtc,
                 Attributes: entry.Attributes,
-                IsReparsePoint: entry.Attributes.HasFlag(FileAttributes.ReparsePoint));
+                IsReparsePoint: entry.Attributes.HasFlag(FileAttributes.ReparsePoint),
+                IsCloudPlaceholder: IsCloudPlaceholder(entry.Attributes));
         }
     }
 

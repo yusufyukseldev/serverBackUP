@@ -10,7 +10,16 @@
 @inject RepositoryRegistry Repos
 @inject NavigationManager Nav
 
-<PageHeader Title="Uyarılar" />
+<PageHeader Title="Uyarılar">
+    <Actions>
+        @if (_alerts is { Count: > 0 })
+        {
+            <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.DangerOutline" Icon="trash" OnClick="() => _confirmDeleteAll = true">
+                Tümünü sil
+            </SbButton>
+        }
+    </Actions>
+</PageHeader>
 
 <div class="sb-content">
     @if (_alerts is null)
@@ -35,6 +44,7 @@
                 <SbCard Title="@alert.Title">
                     <HeaderActions>
                         <SbButton Size="SbButtonSize.Sm" OnClick="() => GoToJob(alert)">İşe git</SbButton>
+                        <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.DangerOutline" Icon="trash" OnClick="() => _deleteTarget = alert">Sil</SbButton>
                     </HeaderActions>
                     <ChildContent>
                         <div class="sb-stack">
@@ -62,13 +72,41 @@
     }
 </div>
 
+<SbDialog Title="Uyarıyı sil" Size="SbDialogSize.Sm"
+          Description="@(_deleteTarget is null ? null : $"'{_deleteTarget.Title}' uyarısı ve bağlı olduğu iş kaydı silinecek.")"
+          Open="@(_deleteTarget is not null)" OnClose="() => _deleteTarget = null">
+    <ChildContent>
+        <p class="sb-hint">Bu, yalnızca uyarı listesinden ve iş geçmişinden kaldırır; depodaki snapshot'lara dokunmaz.</p>
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="() => _deleteTarget = null">Vazgeç</SbButton>
+        <SbButton Variant="SbButtonVariant.Danger" Icon="trash" OnClick="DeleteOneAsync">Sil</SbButton>
+    </Footer>
+</SbDialog>
+
+<SbDialog Title="Tüm uyarıları sil" Size="SbDialogSize.Sm"
+          Description="@($"{_alerts?.Count ?? 0} uyarının tamamı ve bağlı oldukları iş kayıtları silinecek.")"
+          Open="_confirmDeleteAll" OnClose="() => _confirmDeleteAll = false">
+    <ChildContent>
+        <p class="sb-hint">Bu, yalnızca uyarı listesinden ve iş geçmişinden kaldırır; depodaki snapshot'lara dokunmaz.</p>
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="() => _confirmDeleteAll = false">Vazgeç</SbButton>
+        <SbButton Variant="SbButtonVariant.Danger" Icon="trash" OnClick="DeleteAllAsync">Tümünü sil</SbButton>
+    </Footer>
+</SbDialog>
+
 @code {
     private sealed record Alert(
         string RepoPath, string JobId, string Title, string Explanation, string RawError, DateTimeOffset? StartedAtUtc);
 
     private List<Alert>? _alerts;
+    private Alert? _deleteTarget;
+    private bool _confirmDeleteAll;
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync() => await RefreshAsync();
+
+    private async Task RefreshAsync()
     {
         var alerts = new List<Alert>();
 
@@ -93,6 +131,47 @@
         }
 
         _alerts = alerts.OrderByDescending(a => a.StartedAtUtc).ToList();
+    }
+
+    private async Task DeleteOneAsync()
+    {
+        if (_deleteTarget is { } target)
+        {
+            await DeleteJobsAsync([target]);
+        }
+
+        _deleteTarget = null;
+        await RefreshAsync();
+    }
+
+    private async Task DeleteAllAsync()
+    {
+        if (_alerts is { Count: > 0 } alerts)
+        {
+            await DeleteJobsAsync(alerts);
+        }
+
+        _confirmDeleteAll = false;
+        await RefreshAsync();
+    }
+
+    /// <summary>Only clears the alert/job record — the backup data itself lives in Snapshots/Blobs/Packs and is untouched.</summary>
+    private async Task DeleteJobsAsync(IReadOnlyList<Alert> targets)
+    {
+        foreach (var group in targets.GroupBy(a => a.RepoPath))
+        {
+            var dbPath = Path.Combine(group.Key, "catalog.db");
+            if (!File.Exists(dbPath))
+            {
+                continue;
+            }
+
+            await using var db = CatalogDbContextFactory.Create(dbPath);
+            var jobIds = group.Select(a => a.JobId).ToHashSet(StringComparer.Ordinal);
+            var jobs = await db.Jobs.Where(j => jobIds.Contains(j.JobId)).ToListAsync();
+            db.Jobs.RemoveRange(jobs);
+            await db.SaveChangesAsync();
+        }
     }
 
     private void GoToJob(Alert alert) => Nav.NavigateTo("/jobs");

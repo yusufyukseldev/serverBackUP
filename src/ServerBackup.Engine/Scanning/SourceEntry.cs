@@ -8,4 +8,5 @@ public sealed record SourceEntry(
     long Size,
     DateTime LastWriteTimeUtc,
     FileAttributes Attributes,
-    bool IsReparsePoint);
+    bool IsReparsePoint,
+    bool IsCloudPlaceholder = false);

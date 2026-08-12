@@ -8,10 +8,18 @@
 @using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
+@implements IDisposable
 @inject RepositoryRegistry Repos
 @inject NavigationManager Nav
 
-<PageHeader Title="Genel Bakış" />
+<PageHeader Title="Genel Bakış">
+    <Actions>
+        <span class="sb-hint">@(_autoRefresh ? "10 sn'de bir yenileniyor" : "Otomatik yenileme duraklatıldı")</span>
+        <SbButton Size="SbButtonSize.Sm" Icon="@(_autoRefresh ? "pause" : "refresh")" OnClick="ToggleAutoRefresh">
+            @(_autoRefresh ? "Duraklat" : "Sürdür")
+        </SbButton>
+    </Actions>
+</PageHeader>
 
 <div class="sb-content">
 @if (_repos is null)
@@ -144,8 +152,34 @@ else
     private string _bandTitle = "";
     private string _bandBody = "";
     private RenderFragment? _bandAction;
+    private bool _autoRefresh = true;
+    private Timer? _timer;
 
     protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        StartTimer();
+    }
+
+    private void StartTimer() =>
+        _timer = new Timer(async _ => await InvokeAsync(RefreshAsync), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+
+    /// <summary>design-system.md §12.4 — silent auto-refresh is replaced by visible, stoppable behaviour.</summary>
+    private void ToggleAutoRefresh()
+    {
+        _autoRefresh = !_autoRefresh;
+        if (_autoRefresh)
+        {
+            StartTimer();
+        }
+        else
+        {
+            _timer?.Dispose();
+            _timer = null;
+        }
+    }
+
+    private async Task RefreshAsync()
     {
         var repos = new List<RepoOverview>();
         var allJobs = new List<(string RepoDisplayName, JobEntity Job)>();
@@ -238,7 +272,11 @@ else
         _bandAction = _bandTone == SbBannerTone.Err
             ? @<SbButton Variant="SbButtonVariant.DangerOutline" Size="SbButtonSize.Sm" OnClick="GoToAlerts">Uyarılara git</SbButton>
             : null;
+
+        StateHasChanged();
     }
+
+    public void Dispose() => _timer?.Dispose();
 
     private static string DurationText(JobEntity job) =>
         job.StartedAtUtc is null || job.FinishedAtUtc is null
