@@ -213,14 +213,26 @@
                     İleri
                 </SbButton>
             }
+            else if (_running)
+            {
+                <SbButton Variant="SbButtonVariant.DangerOutline" OnClick="CancelRestore"
+                          Disabled="@_cancelRequested" DisabledReason="@(_cancelRequested ? "İptal isteği gönderildi" : null)">
+                    @(_cancelRequested ? "İptal ediliyor..." : "İptal et")
+                </SbButton>
+            }
             else
             {
-                <SbButton Variant="SbButtonVariant.Primary" OnClick="RunRestoreAsync"
-                          Disabled="@_running" DisabledReason="@(_running ? "Geri yükleme sürüyor" : null)">
-                    @(_running ? "Geri yükleniyor..." : "Geri yüklemeyi başlat")
+                <SbButton Variant="SbButtonVariant.Primary" OnClick="RunRestoreAsync">
+                    Geri yüklemeyi başlat
                 </SbButton>
             }
         </div>
+
+        @if (_running && _progress is { } p)
+        {
+            <SbProgress Value="p.BytesCompleted" Max="p.BytesPlanned"
+                        Text="@($"{p.FilesCompleted}/{p.FilesPlanned} dosya — {Fmt.Bytes(p.BytesCompleted)}/{Fmt.Bytes(p.BytesPlanned)}")" />
+        }
 
         @if (_log.Count > 0)
         {
@@ -271,7 +283,10 @@
     private Dictionary<string, List<string>> _sourcePathsBySnapshot = [];
     private readonly List<LogLine> _log = [];
     private bool _running;
+    private bool _cancelRequested;
     private string? _error;
+    private RestoreProgress? _progress;
+    private CancellationTokenSource? _cts;
 
     private List<string> SourcePaths => _snapshotId.Length > 0 && _sourcePathsBySnapshot.TryGetValue(_snapshotId, out var paths)
         ? paths
@@ -431,26 +446,40 @@
         }
 
         _running = true;
+        _cancelRequested = false;
         _error = null;
+        _progress = null;
         _log.Clear();
         Log("Bilgi", $"Geri yükleme başlıyor: {_snapshotId[..8]} → {(_inPlace ? "orijinal konum" : _target)}");
 
+        _cts = new CancellationTokenSource();
         try
         {
-            var engine = new RestoreEngine(_repoPath, _masterKey);
+            var engine = new RestoreEngine(_repoPath, _masterKey, new Progress<RestoreProgress>(p =>
+            {
+                _progress = p;
+                StateHasChanged();
+            }));
 
             var selected = PathQuery is { Length: > 0 } path ? new[] { path } : null;
 
             if (_inPlace)
             {
-                var written = await engine.RestoreInPlaceAsync(_snapshotId, selected, _overwrite);
+                var written = await engine.RestoreInPlaceAsync(_snapshotId, selected, _overwrite, _cts.Token);
                 Log("Bilgi", $"Yedeğe dönüldü: {string.Join(", ", written)}");
             }
             else
             {
-                await engine.RestoreAsync(_snapshotId, _target, selected, _overwrite);
+                await engine.RestoreAsync(_snapshotId, _target, selected, _overwrite, _cts.Token);
                 Log("Bilgi", "Geri yükleme tamamlandı.");
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Files already fully written and renamed to their final name stay —
+            // RestoreEngine never leaves a partial file at a real name, so this
+            // is a safe, resumable stopping point, not a failure.
+            Log("Bilgi", "Geri yükleme iptal edildi. O ana kadar tamamlanan dosyalar yerinde duruyor; kalanlar için işlemi tekrar başlatabilirsiniz.");
         }
         catch (Exception ex)
         {
@@ -460,7 +489,21 @@
         finally
         {
             _running = false;
+            _cancelRequested = false;
+            _cts.Dispose();
+            _cts = null;
         }
+    }
+
+    private void CancelRestore()
+    {
+        if (_cts is null || _cancelRequested)
+        {
+            return;
+        }
+
+        _cancelRequested = true;
+        _cts.Cancel();
     }
 
     private void Log(string level, string message)
@@ -485,5 +528,9 @@
         }
     }
 
-    public void Dispose() => ClearKey();
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        ClearKey();
+    }
 }

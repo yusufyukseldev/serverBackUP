@@ -159,10 +159,155 @@ public sealed class PruneEngineTests : IDisposable
         remaining.Should().BeEquivalentTo([snapshots[^1]], "only the snapshot the policy keeps should remain once pruning fully completes");
     }
 
-    /// <summary>Creates a chain of `count` backups: one file that never changes, one that changes every time.</summary>
-    private async Task<List<string>> CreateChain(int count)
+    [Fact]
+    public async Task Manual_delete_removes_only_the_named_snapshots_own_blobs()
     {
-        await RepositoryManager.InitializeAsync(_repoPath, Password);
+        var snapshots = await CreateChain(count: 3);
+        var masterKey = await RepositoryKeyStore.UnlockAsync(_repoPath, Password);
+
+        var result = await new PruneEngine(_repoPath, masterKey)
+            .RunManualAsync([snapshots[0]], dryRun: false);
+
+        result.SnapshotsToDelete.Should().BeEquivalentTo([snapshots[0]]);
+        result.Refused.Should().BeEmpty();
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_repoPath, "catalog.db"));
+        var remaining = await db.Snapshots.Select(s => s.SnapshotId).ToListAsync();
+        remaining.Should().BeEquivalentTo([snapshots[1], snapshots[2]]);
+
+        // Blobs shared with a kept snapshot (constant.bin) must survive, and
+        // every kept snapshot must still be byte-for-byte restorable.
+        var restoreEngine = new RestoreEngine(_repoPath, masterKey);
+        foreach (var (snapshotId, index) in new[] { (snapshots[1], 1), (snapshots[2], 2) })
+        {
+            var target = Path.Combine(_restorePath, index.ToString());
+            await restoreEngine.RestoreAsync(snapshotId, target);
+
+            var root = Path.Combine(target, Path.GetFileName(_sourcePath));
+            File.ReadAllBytes(Path.Combine(root, "changing.bin")).Should().Equal(ExpectedContentFor(index));
+            File.ReadAllBytes(Path.Combine(root, "constant.bin")).Should().Equal(RandomBytesFor(-1));
+        }
+
+        // The deleted snapshot's own content is genuinely gone, not just hidden.
+        var restoreDeleted = async () => await restoreEngine.RestoreAsync(snapshots[0], Path.Combine(_restorePath, "gone"));
+        await restoreDeleted.Should().ThrowAsync<InvalidOperationException>();
+
+        (await new VerifyEngine(_repoPath, masterKey).RunAsync(VerifyLevel.Full)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Manual_dry_run_reports_without_touching_the_catalog_or_the_disk()
+    {
+        var snapshots = await CreateChain(count: 3);
+        var masterKey = await RepositoryKeyStore.UnlockAsync(_repoPath, Password);
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_repoPath, "catalog.db"));
+        var snapshotsBefore = await db.Snapshots.CountAsync();
+        var blobsBefore = await db.Blobs.CountAsync();
+        var packsBefore = Directory.GetFiles(Path.Combine(_repoPath, "data"), "*.pack", SearchOption.AllDirectories).Length;
+
+        var result = await new PruneEngine(_repoPath, masterKey).RunManualAsync([snapshots[0]]); // dryRun defaults to true
+
+        result.DryRun.Should().BeTrue();
+        result.SnapshotsToDelete.Should().BeEquivalentTo([snapshots[0]]);
+        result.BytesFreed.Should().Be(0);
+
+        (await db.Snapshots.CountAsync()).Should().Be(snapshotsBefore);
+        (await db.Blobs.CountAsync()).Should().Be(blobsBefore);
+        Directory.GetFiles(Path.Combine(_repoPath, "data"), "*.pack", SearchOption.AllDirectories)
+            .Should().HaveCount(packsBefore);
+    }
+
+    [Fact]
+    public async Task A_snapshot_inside_the_immutability_window_is_refused_not_silently_kept()
+    {
+        var snapshots = await CreateChain(count: 2, immutabilityWindowDays: 30);
+        var masterKey = await RepositoryKeyStore.UnlockAsync(_repoPath, Password);
+
+        var result = await new PruneEngine(_repoPath, masterKey)
+            .RunManualAsync([snapshots[0]], dryRun: false);
+
+        result.SnapshotsToDelete.Should().BeEmpty();
+        result.Refused.Should().BeEquivalentTo(
+            [new ManualPruneRefusal(snapshots[0], ManualPruneRefusalReason.ImmutabilityWindow)]);
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_repoPath, "catalog.db"));
+        (await db.Snapshots.Select(s => s.SnapshotId).ToListAsync()).Should().BeEquivalentTo(snapshots);
+    }
+
+    [Fact]
+    public async Task An_append_only_repository_refuses_every_manual_delete()
+    {
+        var snapshots = await CreateChain(count: 2, appendOnly: true);
+        var masterKey = await RepositoryKeyStore.UnlockAsync(_repoPath, Password);
+
+        var result = await new PruneEngine(_repoPath, masterKey)
+            .RunManualAsync([snapshots[0], snapshots[1], "yok-boyle-bir-snapshot"], dryRun: false);
+
+        result.SnapshotsToDelete.Should().BeEmpty();
+        result.Refused.Should().BeEquivalentTo([
+            new ManualPruneRefusal(snapshots[0], ManualPruneRefusalReason.AppendOnly),
+            new ManualPruneRefusal(snapshots[1], ManualPruneRefusalReason.AppendOnly),
+            new ManualPruneRefusal("yok-boyle-bir-snapshot", ManualPruneRefusalReason.NotFound),
+        ]);
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_repoPath, "catalog.db"));
+        (await db.Snapshots.Select(s => s.SnapshotId).ToListAsync()).Should().BeEquivalentTo(snapshots);
+    }
+
+    [Fact]
+    public async Task An_interrupted_manual_delete_leaves_the_repository_consistent()
+    {
+        var snapshots = await CreateChain(count: 12);
+        var masterKey = await RepositoryKeyStore.UnlockAsync(_repoPath, Password);
+        var toDelete = snapshots[..^1];
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(1));
+
+        var pruneEngine = new PruneEngine(_repoPath, masterKey);
+        try
+        {
+            await pruneEngine.RunManualAsync(toDelete, dryRun: false, ct: cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected in the common case, but not guaranteed if the run beat
+            // the 1ms cancellation. Either way the invariants below must hold.
+        }
+
+        // The snapshot that was never targeted must be untouched and fully
+        // restorable no matter how far the interrupted delete got.
+        await new RestoreEngine(_repoPath, masterKey).RestoreAsync(snapshots[^1], _restorePath);
+        var restoredFile = Path.Combine(_restorePath, Path.GetFileName(_sourcePath), "changing.bin");
+        File.ReadAllBytes(restoredFile).Should().Equal(ExpectedContentFor(11));
+
+        // No half-written pack may exist on disk: write-then-delete means every
+        // pack file present is a complete, readable one.
+        var packSubKey = SubKeys.Derive(masterKey, SubKeys.PackKeyInfo);
+        foreach (var packFile in Directory.EnumerateFiles(Path.Combine(_repoPath, "data"), "*.pack", SearchOption.AllDirectories))
+        {
+            using var packStream = File.OpenRead(packFile);
+            var reading = () => new PackReader(packStream, packSubKey);
+            reading.Should().NotThrow($"'{packFile}' must be a complete, valid pack");
+        }
+
+        // Re-running must be able to finish whatever the interruption left
+        // undone; already-deleted ids simply come back as NotFound.
+        var second = await pruneEngine.RunManualAsync(toDelete, dryRun: false);
+        second.Refused.Should().NotContain(r => r.Reason != ManualPruneRefusalReason.NotFound);
+
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_repoPath, "catalog.db"));
+        var remaining = await db.Snapshots.Select(s => s.SnapshotId).ToListAsync();
+        remaining.Should().BeEquivalentTo([snapshots[^1]]);
+
+        (await new VerifyEngine(_repoPath, masterKey).RunAsync(VerifyLevel.Full)).Should().BeEmpty();
+    }
+
+    /// <summary>Creates a chain of `count` backups: one file that never changes, one that changes every time.</summary>
+    private async Task<List<string>> CreateChain(int count, int? immutabilityWindowDays = null, bool appendOnly = false)
+    {
+        await RepositoryManager.InitializeAsync(_repoPath, Password, immutabilityWindowDays, appendOnly);
         var masterKey = await RepositoryKeyStore.UnlockAsync(_repoPath, Password);
 
         File.WriteAllBytes(Path.Combine(_sourcePath, "constant.bin"), RandomBytesFor(-1));

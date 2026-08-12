@@ -6,6 +6,7 @@
 @using ServerBackup.Core.Trees
 @using ServerBackup.Data
 @using ServerBackup.Data.Entities
+@using ServerBackup.Engine.Prune
 @using ServerBackup.Engine.Repository
 @using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
@@ -98,6 +99,9 @@
                                                 <SbButton Size="SbButtonSize.Sm" Icon="restore"
                                                           AriaLabel="@($"{Fmt.DateTime(s.StartedAtUtc)} tarihli yedeğe dön")"
                                                           OnClick="() => RevertTo(s)">Bu yedeğe dön</SbButton>
+                                                <SbButton Size="SbButtonSize.Sm" Variant="SbButtonVariant.Subtle" Icon="trash"
+                                                          AriaLabel="@($"{Fmt.DateTime(s.StartedAtUtc)} tarihli snapshot'ı sil")"
+                                                          OnClick="() => AskDeleteSnapshot(s)" />
                                             </div>
                                         </td>
                                     </tr>
@@ -189,6 +193,43 @@
     }
 </SbDrawer>
 
+<SbDialog Title="Snapshot'ı sil" Description="@(_deleteTarget is null ? null : $"{Fmt.DateTime(_deleteTarget.StartedAtUtc)} tarihli snapshot")"
+          Open="@(_deleteTarget is not null)" OnClose="CloseDeleteDialog" Size="SbDialogSize.Md">
+    <ChildContent>
+        <div class="sb-stack">
+            @if (_deleteError is not null)
+            {
+                <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="@_deleteError" />
+            }
+            else if (_deletePreview is null)
+            {
+                <p class="sb-hint">Önizleme yükleniyor...</p>
+            }
+            else if (_deletePreview.Refused.Count > 0)
+            {
+                <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="Bu snapshot silinemez"
+                          Body="@RefusalText(_deletePreview.Refused[0].Reason)" />
+            }
+            else
+            {
+                <SbBanner Tone="SbBannerTone.Warn" Icon="alert"
+                          Title="Bu snapshot kalıcı olarak silinecek"
+                          Body="@($"{_deletePreview.PacksToDelete.Count} pack tamamen silinecek, {_deletePreview.PacksToRepack.Count} pack yeniden paketlenecek. Başka bir snapshot'la paylaşılan veriler etkilenmez. Bu işlem geri alınamaz.")" />
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="CloseDeleteDialog">Vazgeç</SbButton>
+        @if (_deletePreview is not null && _deletePreview.Refused.Count == 0)
+        {
+            <SbButton Variant="SbButtonVariant.Danger" Icon="trash" OnClick="ConfirmDeleteSnapshotAsync"
+                      Disabled="@_deleteRunning" DisabledReason="@(_deleteRunning ? "Siliniyor" : null)">
+                @(_deleteRunning ? "Siliniyor..." : "Snapshot'ı sil")
+            </SbButton>
+        }
+    </Footer>
+</SbDialog>
+
 @code {
     private sealed record Crumb(string Name, string TreeBlobIdHex);
 
@@ -205,6 +246,11 @@
     private readonly List<Crumb> _trail = [];
     private List<TreeNode>? _currentNodes;
     private TreeNode? _selectedFile;
+
+    private SnapshotEntity? _deleteTarget;
+    private ManualPruneResult? _deletePreview;
+    private string? _deleteError;
+    private bool _deleteRunning;
 
     private IEnumerable<TreeNode> SortedNodes => (_currentNodes ?? [])
         .OrderByDescending(n => n.Kind == TreeNodeKind.Directory)
@@ -389,6 +435,73 @@
             _error = "Bu klasör okunamadı; depo bozulmuş olabilir. Depolar sayfasından doğrulama çalıştırın.";
         }
     }
+
+    private async Task AskDeleteSnapshot(SnapshotEntity snapshot)
+    {
+        _deleteTarget = snapshot;
+        _deletePreview = null;
+        _deleteError = null;
+        await PreviewDeleteAsync();
+    }
+
+    private void CloseDeleteDialog() => _deleteTarget = null;
+
+    /// <summary>
+    /// Nothing is deleted here — dryRun:true reuses the same mark-and-sweep
+    /// path a real delete would take, so the preview is exactly what would
+    /// happen, including refusals from an immutability window or append-only.
+    /// </summary>
+    private async Task PreviewDeleteAsync()
+    {
+        if (_selectedRepo is null || _masterKey is null || _deleteTarget is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var engine = new PruneEngine(_selectedRepo, _masterKey);
+            _deletePreview = await engine.RunManualAsync([_deleteTarget.SnapshotId], dryRun: true);
+        }
+        catch (Exception ex)
+        {
+            _deleteError = $"Önizleme başarısız: {ex.Message}";
+        }
+    }
+
+    private async Task ConfirmDeleteSnapshotAsync()
+    {
+        if (_selectedRepo is null || _masterKey is null || _deleteTarget is null)
+        {
+            return;
+        }
+
+        var snapshotId = _deleteTarget.SnapshotId;
+        _deleteRunning = true;
+        try
+        {
+            var engine = new PruneEngine(_selectedRepo, _masterKey);
+            await engine.RunManualAsync([snapshotId], dryRun: false);
+
+            CloseDeleteDialog();
+            await LoadSnapshotsAsync();
+        }
+        catch (Exception ex)
+        {
+            _deleteError = $"Silme başarısız: {ex.Message}";
+        }
+        finally
+        {
+            _deleteRunning = false;
+        }
+    }
+
+    private static string RefusalText(ManualPruneRefusalReason reason) => reason switch
+    {
+        ManualPruneRefusalReason.AppendOnly => "Bu depo yalnızca-ekleme modunda; hiçbir snapshot panelden silinemez.",
+        ManualPruneRefusalReason.ImmutabilityWindow => "Bu snapshot deponun değişmezlik penceresinde; henüz silinemez.",
+        _ => "Bu snapshot artık depoda yok.",
+    };
 
     private void ClearKey()
     {

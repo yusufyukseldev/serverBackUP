@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authentication.Negotiate;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Serilog;
+using ServerBackup.Data;
 using ServerBackup.Engine.Notifications;
 using ServerBackup.Engine.Scheduling;
 using ServerBackup.Service.Components;
@@ -51,6 +53,12 @@ builder.Services.AddCascadingAuthenticationState();
 
 var app = builder.Build();
 
+// A repository registered before this build added a migration otherwise
+// stays on its old schema forever — nothing else in the codebase applies
+// pending migrations to a repo that already existed (only creating a new one
+// does). Runs once at startup so every page opens an up-to-date catalog.db.
+await MigrateRegisteredRepositoriesAsync(app.Services);
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
@@ -65,6 +73,35 @@ app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestampUtc = 
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 app.Run();
+
+/// <summary>
+/// Best-effort per repo: one repository with a locked or corrupt catalog.db
+/// must not stop the service from serving every other repository.
+/// </summary>
+static async Task MigrateRegisteredRepositoriesAsync(IServiceProvider services)
+{
+    var registry = services.GetRequiredService<RepositoryRegistry>();
+    var logger = services.GetRequiredService<ILogger<Program>>();
+
+    foreach (var repoPath in registry.Paths)
+    {
+        var dbPath = Path.Combine(repoPath, "catalog.db");
+        if (!File.Exists(dbPath))
+        {
+            continue;
+        }
+
+        try
+        {
+            await using var db = CatalogDbContextFactory.Create(dbPath);
+            await db.Database.MigrateAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to migrate catalog.db for repository {RepoPath}.", repoPath);
+        }
+    }
+}
 
 namespace ServerBackup.Service
 {

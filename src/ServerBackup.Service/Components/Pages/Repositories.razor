@@ -364,16 +364,72 @@ else
     </Footer>
 </SbDialog>
 
-@if (_pruneDialogOpen && _selectedRow is not null)
-{
-    <SbConfirmDialog
-        Title="@($"{_selectedRow.DisplayName} budanacak")"
-        Consequence="Bu depodaki saklama politikası dışında kalan snapshot'lar ve artık kullanılmayan pack'ler kalıcı olarak silinir. Bu işlem geri alınamaz."
-        ConfirmWord="@_selectedRow.DisplayName"
-        ConfirmLabel="@(_pruneRunning ? "Budanıyor..." : "Budayı çalıştır")"
-        OnConfirm="RunPruneAsync"
-        OnCancel="ClosePruneDialog" />
-}
+<SbDialog Title="Depoyu buda" Description="@(_selectedRow?.RepoPath)" Open="_pruneDialogOpen" OnClose="ClosePruneDialog" Size="SbDialogSize.Md">
+    <ChildContent>
+        <div class="sb-stack">
+            @if (_selectedRow is not null && !_selectedRow.UnattendedEnabled && _prunePreview is null)
+            {
+                <SbField Label="Parola" For="f-prune-pwd">
+                    <input class="sb-input" type="password" id="f-prune-pwd" @bind="_prunePassword" />
+                </SbField>
+            }
+
+            @if (_pruneError is not null)
+            {
+                <SbBanner Tone="SbBannerTone.Err" Icon="alert" Title="@_pruneError" />
+            }
+
+            @if (_prunePreview is null)
+            {
+                <p class="sb-hint">
+                    Hiçbir şey silinmeden önce, bu planın saklama politikasının hangi snapshot'ları
+                    sileceğini önizleyin.
+                </p>
+            }
+            else if (_prunePreview.SnapshotsToDelete.Count == 0)
+            {
+                <SbBanner Tone="SbBannerTone.Ok" Icon="check" Title="Silinecek snapshot yok" Body="Saklama politikası şu an hiçbir snapshot'ı budama kapsamına almıyor." />
+            }
+            else
+            {
+                <SbBanner Tone="SbBannerTone.Warn" Icon="alert"
+                          Title="@($"{_prunePreview.SnapshotsToDelete.Count} snapshot silinecek")"
+                          Body="@($"{_prunePreview.PacksToDelete.Count} pack tamamen silinecek, {_prunePreview.PacksToRepack.Count} pack yeniden paketlenecek. Bu işlem geri alınamaz.")" />
+
+                <div class="sb-table-wrap">
+                    <table class="sb-table">
+                        <thead>
+                            <tr><th scope="col">Tarih</th><th scope="col">Snapshot</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var s in _prunePreviewSnapshots ?? [])
+                            {
+                                <tr><td class="num">@Fmt.DateTime(s.StartedAtUtc)</td><td class="id">@s.SnapshotId[..8]</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <SbButton OnClick="ClosePruneDialog">Vazgeç</SbButton>
+        @if (_prunePreview is null)
+        {
+            <SbButton Variant="SbButtonVariant.Primary" OnClick="PreviewPruneAsync"
+                      Disabled="@_pruneBusy" DisabledReason="@(_pruneBusy ? "Önizleme sürüyor" : null)">
+                @(_pruneBusy ? "Önizleniyor..." : "Önizlemeyi göster")
+            </SbButton>
+        }
+        else if (_prunePreview.SnapshotsToDelete.Count > 0)
+        {
+            <SbButton Variant="SbButtonVariant.Danger" Icon="trash" OnClick="ApplyPruneAsync"
+                      Disabled="@_pruneBusy" DisabledReason="@(_pruneBusy ? "Budama sürüyor" : null)">
+                @(_pruneBusy ? "Budanıyor..." : "Budayı çalıştır")
+            </SbButton>
+        }
+    </Footer>
+</SbDialog>
 @if (_pruneMessage is not null)
 {
     <div class="sb-overlay">
@@ -427,8 +483,12 @@ else
     private string? _verifyMessage;
 
     private bool _pruneDialogOpen;
-    private bool _pruneRunning;
+    private bool _pruneBusy;
+    private string _prunePassword = "";
+    private string? _pruneError;
     private string? _pruneMessage;
+    private PruneResult? _prunePreview;
+    private List<SnapshotEntity>? _prunePreviewSnapshots;
 
     private bool CanPrune => _drawerPlanCount == 1;
 
@@ -510,6 +570,13 @@ else
             if (repoPath is null)
             {
                 return;
+            }
+
+            // An attached repository may predate migrations this build added —
+            // creation already migrates, this makes attach safe the same way.
+            await using (var db = CatalogDbContextFactory.Create(Path.Combine(repoPath, "catalog.db")))
+            {
+                await db.Database.MigrateAsync();
             }
 
             Repos.Add(repoPath);
@@ -826,43 +893,99 @@ else
 
     private void OpenPruneDialog()
     {
+        _prunePassword = "";
+        _pruneError = null;
         _pruneMessage = null;
+        _prunePreview = null;
+        _prunePreviewSnapshots = null;
         _pruneDialogOpen = true;
     }
 
     private void ClosePruneDialog() => _pruneDialogOpen = false;
 
-    private async Task RunPruneAsync()
+    private RetentionPolicy CurrentRetentionPolicy() =>
+        _drawerSinglePlan?.RetentionPolicyJson is null
+            ? new RetentionPolicy()
+            : System.Text.Json.JsonSerializer.Deserialize<RetentionPolicy>(_drawerSinglePlan.RetentionPolicyJson) ?? new RetentionPolicy();
+
+    private async Task<byte[]?> UnlockForPruneAsync(string repoPath)
+    {
+        try
+        {
+            return _selectedRow!.UnattendedEnabled
+                ? UnattendedKeyStore.Unlock(repoPath)
+                : await RepositoryKeyStore.UnlockAsync(repoPath, _prunePassword);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _pruneError = "Parola yanlış.";
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Nothing is deleted here. The operator must see exactly which snapshots
+    /// the policy would remove before the destructive button even appears —
+    /// this is what makes "budama" trustworthy after silent data loss.
+    /// </summary>
+    private async Task PreviewPruneAsync()
     {
         if (_selectedRow is null || _drawerSinglePlan is null)
         {
             return;
         }
 
+        _pruneError = null;
         var repoPath = _selectedRow.RepoPath;
-        byte[] masterKey;
-        try
+        var masterKey = await UnlockForPruneAsync(repoPath);
+        if (masterKey is null)
         {
-            masterKey = _selectedRow.UnattendedEnabled
-                ? UnattendedKeyStore.Unlock(repoPath)
-                : throw new UnauthorizedAccessException("Bu depo gözetimsiz erişime açık değil — buda için önce Ayarlar'dan açık erişimi etkinleştirin.");
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            _pruneMessage = ex.Message;
-            _pruneDialogOpen = false;
             return;
         }
 
-        _pruneRunning = true;
+        _pruneBusy = true;
         try
         {
-            var policy = _drawerSinglePlan.RetentionPolicyJson is null
-                ? new RetentionPolicy()
-                : System.Text.Json.JsonSerializer.Deserialize<RetentionPolicy>(_drawerSinglePlan.RetentionPolicyJson) ?? new RetentionPolicy();
-
             var engine = new PruneEngine(repoPath, masterKey);
-            var result = await engine.RunAsync(policy, dryRun: false);
+            _prunePreview = await engine.RunAsync(CurrentRetentionPolicy(), dryRun: true, planId: _drawerSinglePlan.PlanId);
+
+            await using var db = CatalogDbContextFactory.Create(Path.Combine(repoPath, "catalog.db"));
+            _prunePreviewSnapshots = (await db.Snapshots.AsNoTracking()
+                    .Where(s => _prunePreview.SnapshotsToDelete.Contains(s.SnapshotId))
+                    .ToListAsync())
+                .OrderByDescending(s => s.StartedAtUtc)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _pruneError = $"Önizleme başarısız: {ex.Message}";
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(masterKey);
+            _pruneBusy = false;
+        }
+    }
+
+    private async Task ApplyPruneAsync()
+    {
+        if (_selectedRow is null || _drawerSinglePlan is null || _prunePreview is null)
+        {
+            return;
+        }
+
+        var repoPath = _selectedRow.RepoPath;
+        var masterKey = await UnlockForPruneAsync(repoPath);
+        if (masterKey is null)
+        {
+            return;
+        }
+
+        _pruneBusy = true;
+        try
+        {
+            var engine = new PruneEngine(repoPath, masterKey);
+            var result = await engine.RunAsync(CurrentRetentionPolicy(), dryRun: false, planId: _drawerSinglePlan.PlanId);
 
             _pruneMessage = $"{result.SnapshotsToDelete.Count} snapshot silindi, {Fmt.Bytes(result.BytesFreed)} boşaltıldı.";
             _pruneDialogOpen = false;
@@ -875,7 +998,7 @@ else
         finally
         {
             CryptographicOperations.ZeroMemory(masterKey);
-            _pruneRunning = false;
+            _pruneBusy = false;
         }
     }
 }

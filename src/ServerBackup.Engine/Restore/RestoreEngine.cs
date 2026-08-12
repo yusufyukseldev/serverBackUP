@@ -14,18 +14,34 @@ namespace ServerBackup.Engine.Restore;
 /// Restores a snapshot to disk. Reads are grouped by pack (each pack's
 /// header is parsed once, and its needed blobs are decrypted in on-disk
 /// order) rather than following file order, since a single file's chunks
-/// can be scattered across many packs — see plan Faz 6. ACLs and timestamps
-/// are applied only after every byte has been written.
+/// can be scattered across many packs — see plan Faz 6.
+///
+/// Content is written to a sibling <see cref="TempSuffix"/> file and renamed
+/// onto the final name only once that file's last chunk has landed, so a
+/// cancelled or killed restore can never leave a half-written file sitting at
+/// a real name where an operator would read it as restored. ACLs and
+/// timestamps are applied per file right after its rename; directory metadata
+/// still comes last, since writing children into a directory would otherwise
+/// overwrite the timestamp we just restored.
 /// </summary>
 public sealed class RestoreEngine
 {
+    /// <summary>
+    /// Suffix of the in-progress copy of a file being restored. Anything with
+    /// this suffix is scratch: a leftover from a crashed run is truncated and
+    /// reused, never read back.
+    /// </summary>
+    internal const string TempSuffix = ".sbrestore-tmp";
+
     private readonly string _repoPath;
     private readonly byte[] _masterKey;
+    private readonly IProgress<RestoreProgress>? _progress;
 
-    public RestoreEngine(string repoPath, byte[] masterKey)
+    public RestoreEngine(string repoPath, byte[] masterKey, IProgress<RestoreProgress>? progress = null)
     {
         _repoPath = repoPath;
         _masterKey = masterKey;
+        _progress = progress;
     }
 
     /// <summary>
@@ -174,6 +190,8 @@ public sealed class RestoreEngine
             Directory.CreateDirectory(dir.TargetPath);
         }
 
+        // The whole plan is settled before the first byte is written so the
+        // progress totals a caller renders a percentage against never move.
         var filesToWrite = new List<PlannedFile>();
         foreach (var file in plannedFiles)
         {
@@ -190,24 +208,51 @@ public sealed class RestoreEngine
                 {
                     throw new IOException($"Target file already exists: {file.TargetPath}");
                 }
-
-                ClearAttributesBlockingOverwrite(file.TargetPath);
-            }
-
-            using (var fs = File.Create(file.TargetPath))
-            {
-                fs.SetLength(file.Size);
             }
 
             filesToWrite.Add(file);
         }
 
-        await WriteChunksGroupedByPackAsync(db, _repoPath, SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo), filesToWrite, ct);
+        var filesPlanned = filesToWrite.Count;
+        var bytesPlanned = filesToWrite.Sum(f => f.Size);
+        long filesCompleted = 0;
+        long bytesCompleted = 0;
 
+        void Report() => _progress?.Report(new RestoreProgress(filesPlanned, filesCompleted, bytesPlanned, bytesCompleted));
+
+        void CompleteFile(FileWriteState state)
+        {
+            PromoteTempFile(state.TempPath, state.File.TargetPath);
+            ApplyMetadata(state.File.TargetPath, state.File.ModifiedAtFileTimeUtc, state.File.Attributes, state.File.Sddl, isDirectory: false);
+
+            filesCompleted++;
+            bytesCompleted += state.File.Size;
+            Report();
+        }
+
+        Report();
+
+        var pendingFiles = new List<FileWriteState>(filesToWrite.Count);
         foreach (var file in filesToWrite)
         {
-            ApplyMetadata(file.TargetPath, file.ModifiedAtFileTimeUtc, file.Attributes, file.Sddl, isDirectory: false);
+            ct.ThrowIfCancellationRequested();
+
+            var state = new FileWriteState(file, file.TargetPath + TempSuffix);
+            CreateTempFile(state.TempPath, file.Size);
+
+            if (state.ChunksRemaining == 0)
+            {
+                // No chunks will ever land for an empty file, so its rename has
+                // to happen here or it would stay a temp file forever.
+                CompleteFile(state);
+                continue;
+            }
+
+            pendingFiles.Add(state);
         }
+
+        await WriteChunksGroupedByPackAsync(
+            db, _repoPath, SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo), pendingFiles, CompleteFile, ct);
 
         foreach (var dir in plannedDirs)
         {
@@ -246,11 +291,43 @@ public sealed class RestoreEngine
         }
     }
 
-    private static async Task WriteChunksGroupedByPackAsync(
-        CatalogDbContext db, string repoPath, byte[] packSubKey, List<PlannedFile> filesToWrite, CancellationToken ct)
+    /// <summary>
+    /// Creates the scratch file a restore writes into. A leftover from a
+    /// crashed run is truncated by <see cref="File.Create(string)"/> before
+    /// <c>SetLength</c> re-expands it, so its old bytes can never survive into
+    /// a hole this run does not write over.
+    /// </summary>
+    private static void CreateTempFile(string tempPath, long size)
     {
-        var neededIds = filesToWrite.SelectMany(f => f.ChunkBlobIdsHex).ToHashSet();
-        if (neededIds.Count == 0)
+        if (File.Exists(tempPath))
+        {
+            ClearAttributesBlockingOverwrite(tempPath);
+        }
+
+        using var fs = File.Create(tempPath);
+        fs.SetLength(size);
+    }
+
+    /// <summary>
+    /// Publishes a fully written file under its real name. Same-volume moves
+    /// are atomic on NTFS, which is what makes "present at the final name"
+    /// mean "correct" for a crash that lands anywhere in this restore.
+    /// </summary>
+    private static void PromoteTempFile(string tempPath, string targetPath)
+    {
+        if (File.Exists(targetPath))
+        {
+            ClearAttributesBlockingOverwrite(targetPath);
+        }
+
+        File.Move(tempPath, targetPath, overwrite: true);
+    }
+
+    private static async Task WriteChunksGroupedByPackAsync(
+        CatalogDbContext db, string repoPath, byte[] packSubKey,
+        List<FileWriteState> filesToWrite, Action<FileWriteState> onFileCompleted, CancellationToken ct)
+    {
+        if (filesToWrite.Count == 0)
         {
             return;
         }
@@ -259,18 +336,18 @@ public sealed class RestoreEngine
             .Select(b => new { b.BlobId, b.PackId, b.LenPlain })
             .ToDictionaryAsync(b => b.BlobId, ct);
 
-        var chunkPlan = new List<(string BlobIdHex, string TargetPath, long Offset, string PackId)>();
-        foreach (var file in filesToWrite)
+        var chunkPlan = new List<(string BlobIdHex, FileWriteState State, long Offset, string PackId)>();
+        foreach (var state in filesToWrite)
         {
             long offset = 0;
-            foreach (var blobIdHex in file.ChunkBlobIdsHex)
+            foreach (var blobIdHex in state.File.ChunkBlobIdsHex)
             {
                 if (!blobInfo.TryGetValue(blobIdHex, out var info))
                 {
-                    throw new InvalidOperationException($"Blob '{blobIdHex}' referenced by '{file.RelativePath}' is missing from the catalog.");
+                    throw new InvalidOperationException($"Blob '{blobIdHex}' referenced by '{state.File.RelativePath}' is missing from the catalog.");
                 }
 
-                chunkPlan.Add((blobIdHex, file.TargetPath, offset, info.PackId));
+                chunkPlan.Add((blobIdHex, state, offset, info.PackId));
                 offset += info.LenPlain;
             }
         }
@@ -294,11 +371,36 @@ public sealed class RestoreEngine
                 ct.ThrowIfCancellationRequested();
 
                 var plaintext = reader.ReadBlob(indexByBlobId[item.BlobIdHex]);
-                using var fs = new FileStream(item.TargetPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
-                fs.Seek(item.Offset, SeekOrigin.Begin);
-                fs.Write(plaintext);
+                using (var fs = new FileStream(item.State.TempPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+                {
+                    fs.Seek(item.Offset, SeekOrigin.Begin);
+                    fs.Write(plaintext);
+                }
+
+                if (--item.State.ChunksRemaining == 0)
+                {
+                    onFileCompleted(item.State);
+
+                    // Checked per completed file as well as per chunk, so a
+                    // cancel lands promptly on a plan of many tiny files too.
+                    ct.ThrowIfCancellationRequested();
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// A file being restored, and how many of its chunks are still outstanding.
+    /// Chunks are written in pack order rather than file order, so this counter
+    /// is what tells us the moment a file is whole and can take its real name.
+    /// </summary>
+    private sealed class FileWriteState(PlannedFile file, string tempPath)
+    {
+        public PlannedFile File { get; } = file;
+
+        public string TempPath { get; } = tempPath;
+
+        public int ChunksRemaining { get; set; } = file.ChunkBlobIdsHex.Count;
     }
 
     /// <summary>

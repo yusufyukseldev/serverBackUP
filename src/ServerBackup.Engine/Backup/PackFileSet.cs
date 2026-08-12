@@ -1,6 +1,7 @@
 using ServerBackup.Core.Repository;
 using ServerBackup.Data;
 using ServerBackup.Data.Entities;
+using ServerBackup.Engine.Throttling;
 
 namespace ServerBackup.Engine.Backup;
 
@@ -20,20 +21,35 @@ public sealed class PackFileSet : IAsyncDisposable
     private readonly string _repoPath;
     private readonly byte[] _packSubKey;
     private readonly CatalogDbContext _db;
+    private readonly TokenBucketThrottle? _throttle;
 
     private PackWriter? _writer;
     private FileStream? _stream;
     private string? _packId;
 
-    public PackFileSet(string repoPath, byte[] packSubKey, CatalogDbContext db)
+    /// <param name="throttle">
+    /// Optional I/O rate limit shared with the rest of the run. Null (the
+    /// default) means unlimited — the write path then never touches the
+    /// throttle at all, so unconfigured runs pay nothing.
+    /// </param>
+    public PackFileSet(string repoPath, byte[] packSubKey, CatalogDbContext db, TokenBucketThrottle? throttle = null)
     {
         _repoPath = repoPath;
         _packSubKey = packSubKey;
         _db = db;
+        _throttle = throttle;
     }
 
     public async Task WriteAsync(byte[] blobId, BlobKind kind, byte[] compressedData, byte codec, int lenPlain, CancellationToken ct)
     {
+        if (_throttle is not null)
+        {
+            // Charged against the budget before the bytes hit the disk, using
+            // the compressed length — what actually gets written, modulo the
+            // fixed AEAD overhead per blob.
+            await _throttle.WaitForBudgetAsync(compressedData.Length, ct);
+        }
+
         EnsureOpen();
         _writer!.AddPreCompressedBlob(blobId, kind, compressedData, codec, lenPlain);
 

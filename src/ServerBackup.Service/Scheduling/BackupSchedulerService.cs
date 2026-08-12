@@ -11,6 +11,7 @@ using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Retention;
 using ServerBackup.Engine.Scanning;
 using ServerBackup.Engine.Scheduling;
+using ServerBackup.Engine.Verify;
 using ServerBackup.Service.Storage;
 
 namespace ServerBackup.Service.Scheduling;
@@ -88,44 +89,50 @@ public sealed class BackupSchedulerService(
 
         foreach (var plan in plans)
         {
-            if (string.IsNullOrEmpty(plan.CronSchedule))
-            {
-                continue;
-            }
-
-            // SQLite can't translate ORDER BY on DateTimeOffset — sort client-side.
-            var lastSuccess = (await db.Jobs.AsNoTracking()
-                    .Where(j => j.PlanId == plan.PlanId && j.Status == JobStatus.Succeeded)
-                    .ToListAsync(ct))
-                .OrderByDescending(j => j.FinishedAtUtc)
-                .FirstOrDefault()
-                ?.FinishedAtUtc;
-
-            if (!CronScheduleCalculator.IsDue(plan.CronSchedule, lastSuccess, DateTimeOffset.UtcNow))
-            {
-                continue;
-            }
-
-            var alreadyQueued = await db.Jobs.AnyAsync(
-                j => j.PlanId == plan.PlanId && (j.Status == JobStatus.Pending || j.Status == JobStatus.Running), ct);
-            if (alreadyQueued)
-            {
-                continue;
-            }
-
-            var jobId = Guid.NewGuid().ToString("n");
-            db.Jobs.Add(new JobEntity
-            {
-                JobId = jobId,
-                PlanId = plan.PlanId,
-                Kind = "backup",
-                Status = JobStatus.Pending,
-            });
-            await db.SaveChangesAsync(ct);
-
-            await queue.Writer.WriteAsync(new ScheduledJob(repoPath, jobId, plan.PlanId), ct);
-            logger.LogInformation("Queued job {JobId} for plan {PlanName} in {RepoPath}.", jobId, plan.Name, repoPath);
+            await EnqueueIfDueAsync(db, repoPath, plan, "backup", plan.CronSchedule, ct);
+            await EnqueueIfDueAsync(db, repoPath, plan, "verify", plan.VerifyCronSchedule, ct);
         }
+    }
+
+    private async Task EnqueueIfDueAsync(CatalogDbContext db, string repoPath, PlanEntity plan, string kind, string? cron, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(cron))
+        {
+            return;
+        }
+
+        // SQLite can't translate ORDER BY on DateTimeOffset — sort client-side.
+        var lastSuccess = (await db.Jobs.AsNoTracking()
+                .Where(j => j.PlanId == plan.PlanId && j.Kind == kind && j.Status == JobStatus.Succeeded)
+                .ToListAsync(ct))
+            .OrderByDescending(j => j.FinishedAtUtc)
+            .FirstOrDefault()
+            ?.FinishedAtUtc;
+
+        if (!CronScheduleCalculator.IsDue(cron, lastSuccess, DateTimeOffset.UtcNow))
+        {
+            return;
+        }
+
+        var alreadyQueued = await db.Jobs.AnyAsync(
+            j => j.PlanId == plan.PlanId && j.Kind == kind && (j.Status == JobStatus.Pending || j.Status == JobStatus.Running), ct);
+        if (alreadyQueued)
+        {
+            return;
+        }
+
+        var jobId = Guid.NewGuid().ToString("n");
+        db.Jobs.Add(new JobEntity
+        {
+            JobId = jobId,
+            PlanId = plan.PlanId,
+            Kind = kind,
+            Status = JobStatus.Pending,
+        });
+        await db.SaveChangesAsync(ct);
+
+        await queue.Writer.WriteAsync(new ScheduledJob(repoPath, jobId, plan.PlanId, kind), ct);
+        logger.LogInformation("Queued {Kind} job {JobId} for plan {PlanName} in {RepoPath}.", kind, jobId, plan.Name, repoPath);
     }
 
     private async Task WorkerLoopAsync(CancellationToken stoppingToken)
@@ -167,52 +174,14 @@ public sealed class BackupSchedulerService(
             var masterKey = UnattendedKeyStore.Unlock(scheduled.RepoPath);
             try
             {
-                var sourcePaths = JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson)
-                    ?? throw new InvalidDataException($"Plan '{plan.PlanId}' has no valid source paths.");
-
-                // Chain to this plan's most recent snapshot so the run is
-                // incremental and anomaly detection (which needs a parent to
-                // compare against) actually has something to compare against.
-                var parentSnapshotId = (await db.Snapshots.AsNoTracking()
-                        .Where(s => s.PlanId == plan.PlanId)
-                        .ToListAsync(CancellationToken.None))
-                    .OrderByDescending(s => s.StartedAtUtc)
-                    .FirstOrDefault()
-                    ?.SnapshotId;
-
-                // Unattended runs have no human watching, so anomaly
-                // detection defaults to aborting rather than just warning —
-                // see plan Faz 11.
-                BackupProgress? lastProgress = null;
-                var engine = new BackupEngine(
-                    new LocalSourceProvider(), scheduled.RepoPath, masterKey,
-                    filter: new ScanFilter(sourcePaths[0]),
-                    progress: new Progress<BackupProgress>(p => lastProgress = p),
-                    anomalyPolicy: new AnomalyPolicy(AbortOnDetection: true));
-                var snapshotId = await engine.RunAsync(sourcePaths, parentSnapshotId, plan.PlanId, stoppingToken);
-
-                if (!string.IsNullOrEmpty(plan.RetentionPolicyJson))
+                if (scheduled.Kind == "verify")
                 {
-                    var policy = JsonSerializer.Deserialize<RetentionPolicy>(plan.RetentionPolicyJson);
-                    if (policy is not null)
-                    {
-                        var pruneEngine = new PruneEngine(scheduled.RepoPath, masterKey);
-                        await pruneEngine.RunAsync(policy, dryRun: false, planId: plan.PlanId, ct: stoppingToken);
-                    }
+                    await RunVerifyJobAsync(db, job, plan, scheduled, masterKey, stoppingToken);
                 }
-
-                var skipped = lastProgress?.EntriesSkipped ?? 0;
-                job.Status = JobStatus.Succeeded;
-                job.FinishedAtUtc = DateTimeOffset.UtcNow;
-                db.JobLogs.Add(new JobLogEntity
+                else
                 {
-                    JobId = job.JobId,
-                    TimestampUtc = DateTimeOffset.UtcNow,
-                    Level = skipped > 0 ? "Warning" : "Information",
-                    Message = skipped > 0
-                        ? $"Snapshot {snapshotId} completed; {skipped} unreadable entries skipped."
-                        : $"Snapshot {snapshotId} completed successfully.",
-                });
+                    await RunBackupJobAsync(db, job, plan, scheduled, masterKey, stoppingToken);
+                }
             }
             finally
             {
@@ -241,11 +210,111 @@ public sealed class BackupSchedulerService(
 
             var title = ex is AnomalyDetectedException
                 ? $"ServerBackup: OLASI FİDYE YAZILIMI / KİTLESEL DEĞİŞİM — '{plan.Name}' durduruldu"
-                : $"ServerBackup: '{plan.Name}' yedeklemesi başarısız";
+                : scheduled.Kind == "verify"
+                    ? $"ServerBackup: '{plan.Name}' doğrulaması çalıştırılamadı"
+                    : $"ServerBackup: '{plan.Name}' yedeklemesi başarısız";
             notifier.Notify(title, ex.Message, NotificationSeverity.Error);
         }
 
         // Persist the final status even if stoppingToken is already cancelled.
         await db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    private async Task RunBackupJobAsync(
+        CatalogDbContext db, JobEntity job, PlanEntity plan, ScheduledJob scheduled, byte[] masterKey, CancellationToken stoppingToken)
+    {
+        var sourcePaths = JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson)
+            ?? throw new InvalidDataException($"Plan '{plan.PlanId}' has no valid source paths.");
+
+        // Chain to this plan's most recent snapshot so the run is
+        // incremental and anomaly detection (which needs a parent to
+        // compare against) actually has something to compare against.
+        var parentSnapshotId = (await db.Snapshots.AsNoTracking()
+                .Where(s => s.PlanId == plan.PlanId)
+                .ToListAsync(CancellationToken.None))
+            .OrderByDescending(s => s.StartedAtUtc)
+            .FirstOrDefault()
+            ?.SnapshotId;
+
+        // Unattended runs have no human watching, so anomaly
+        // detection defaults to aborting rather than just warning —
+        // see plan Faz 11.
+        BackupProgress? lastProgress = null;
+        var engine = new BackupEngine(
+            new LocalSourceProvider(), scheduled.RepoPath, masterKey,
+            filter: new ScanFilter(sourcePaths[0]),
+            progress: new Progress<BackupProgress>(p => lastProgress = p),
+            anomalyPolicy: new AnomalyPolicy(AbortOnDetection: true));
+        var snapshotId = await engine.RunAsync(sourcePaths, parentSnapshotId, plan.PlanId, stoppingToken);
+
+        if (!string.IsNullOrEmpty(plan.RetentionPolicyJson))
+        {
+            var policy = JsonSerializer.Deserialize<RetentionPolicy>(plan.RetentionPolicyJson);
+            if (policy is not null)
+            {
+                var pruneEngine = new PruneEngine(scheduled.RepoPath, masterKey);
+                await pruneEngine.RunAsync(policy, dryRun: false, planId: plan.PlanId, ct: stoppingToken);
+            }
+        }
+
+        var skipped = lastProgress?.EntriesSkipped ?? 0;
+        job.Status = JobStatus.Succeeded;
+        job.FinishedAtUtc = DateTimeOffset.UtcNow;
+        db.JobLogs.Add(new JobLogEntity
+        {
+            JobId = job.JobId,
+            TimestampUtc = DateTimeOffset.UtcNow,
+            Level = skipped > 0 ? "Warning" : "Information",
+            Message = skipped > 0
+                ? $"Snapshot {snapshotId} completed; {skipped} unreadable entries skipped."
+                : $"Snapshot {snapshotId} completed successfully.",
+        });
+    }
+
+    /// <summary>
+    /// An unverified backup is a wish, not a backup — see CLAUDE.md item 4 of
+    /// the panel backlog. Issues never fail silently: they land in the job
+    /// log AND go through the same notifier a failed backup uses, because an
+    /// operator who only checks alerts must see repository corruption too.
+    /// </summary>
+    private async Task RunVerifyJobAsync(
+        CatalogDbContext db, JobEntity job, PlanEntity plan, ScheduledJob scheduled, byte[] masterKey, CancellationToken stoppingToken)
+    {
+        var level = Enum.TryParse<VerifyLevel>(plan.VerifyLevel, out var parsed) ? parsed : VerifyLevel.Packs;
+        var engine = new VerifyEngine(scheduled.RepoPath, masterKey);
+        var issues = await engine.RunAsync(level, stoppingToken);
+
+        job.FinishedAtUtc = DateTimeOffset.UtcNow;
+
+        if (issues.Count == 0)
+        {
+            job.Status = JobStatus.Succeeded;
+            db.JobLogs.Add(new JobLogEntity
+            {
+                JobId = job.JobId,
+                TimestampUtc = DateTimeOffset.UtcNow,
+                Level = "Information",
+                Message = $"Doğrulama ({level}) tamamlandı, sorun bulunamadı.",
+            });
+            return;
+        }
+
+        job.Status = JobStatus.Failed;
+        job.ErrorMessage = $"{issues.Count} sorun bulundu.";
+        foreach (var issue in issues)
+        {
+            db.JobLogs.Add(new JobLogEntity
+            {
+                JobId = job.JobId,
+                TimestampUtc = DateTimeOffset.UtcNow,
+                Level = "Error",
+                Message = $"[{issue.Category}] {issue.Description}",
+            });
+        }
+
+        notifier.Notify(
+            $"ServerBackup: '{plan.Name}' deposunda doğrulama sorunu",
+            $"{issues.Count} sorun bulundu. İlk sorun: {issues[0].Description}",
+            NotificationSeverity.Error);
     }
 }

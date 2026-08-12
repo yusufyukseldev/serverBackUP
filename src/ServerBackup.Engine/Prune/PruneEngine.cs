@@ -3,6 +3,7 @@ using ServerBackup.Core.Crypto;
 using ServerBackup.Core.Repository;
 using ServerBackup.Core.Trees;
 using ServerBackup.Data;
+using ServerBackup.Data.Entities;
 using ServerBackup.Engine.Audit;
 using ServerBackup.Engine.Backup;
 using ServerBackup.Engine.Repository;
@@ -63,12 +64,78 @@ public sealed class PruneEngine
             keepIds.Add(snapshot.SnapshotId);
         }
 
-        // Immutability window (plan Faz 11): a snapshot younger than this can
-        // never be deleted, regardless of what the retention policy says —
-        // no override, not even from the panel. This is what makes prune
-        // ransomware-resistant: an attacker with repo access can't just
-        // shorten the policy and immediately wipe everything.
         var config = await RepositoryManager.ReadConfigAsync(_repoPath, ct);
+        ApplyProtections(config, allSnapshots, keepIds);
+
+        var sweep = await SweepAsync(db, allSnapshots, keepIds, dryRun, "prune", ct);
+
+        return new PruneResult(
+            sweep.DryRun, sweep.Deleted, sweep.PacksToDelete, sweep.PacksToRepack, sweep.BytesFreed);
+    }
+
+    /// <summary>
+    /// Deletes exactly the snapshots an operator asked for, independent of any
+    /// retention policy: the keep-set is "everything except these ids", after
+    /// which the very same mark-and-sweep/repack core as
+    /// <see cref="RunAsync"/> runs — same write-then-delete ordering, same
+    /// crash safety.
+    /// <para>
+    /// The repository's protections still win: with <c>AppendOnly</c> nothing
+    /// can be deleted at all, and a snapshot inside the immutability window is
+    /// kept even when it was named explicitly. Because the request here is
+    /// explicit (unlike a policy run, where "not selected" is normal), every
+    /// id that was asked for but not deleted is reported in
+    /// <see cref="ManualPruneResult.Refused"/> with a
+    /// <see cref="ManualPruneRefusalReason"/>, so the caller can tell the
+    /// operator why nothing happened. Unknown ids are refused as
+    /// <see cref="ManualPruneRefusalReason.NotFound"/> rather than throwing.
+    /// </para>
+    /// dryRun defaults to true — deletion is destructive and must be an explicit opt-in.
+    /// </summary>
+    public async Task<ManualPruneResult> RunManualAsync(
+        IReadOnlyList<string> snapshotIdsToDelete, bool dryRun = true, CancellationToken ct = default)
+    {
+        await using var db = CatalogDbContextFactory.Create(Path.Combine(_repoPath, "catalog.db"));
+
+        var allSnapshots = await db.Snapshots.AsNoTracking().ToListAsync(ct);
+        var known = allSnapshots.Select(s => s.SnapshotId).ToHashSet(StringComparer.Ordinal);
+
+        var requested = snapshotIdsToDelete.Distinct(StringComparer.Ordinal).ToList();
+        var refusals = requested
+            .Where(id => !known.Contains(id))
+            .Select(id => new ManualPruneRefusal(id, ManualPruneRefusalReason.NotFound))
+            .ToList();
+
+        var targeted = requested.Where(known.Contains).ToHashSet(StringComparer.Ordinal);
+        var keepIds = known.Where(id => !targeted.Contains(id)).ToHashSet(StringComparer.Ordinal);
+
+        var config = await RepositoryManager.ReadConfigAsync(_repoPath, ct);
+        var forcedKeeps = ApplyProtections(config, allSnapshots, keepIds);
+
+        refusals.AddRange(targeted
+            .Where(forcedKeeps.ContainsKey)
+            .Select(id => new ManualPruneRefusal(id, forcedKeeps[id])));
+
+        var sweep = await SweepAsync(db, allSnapshots, keepIds, dryRun, "prune-manual", ct);
+
+        return new ManualPruneResult(
+            sweep.DryRun, sweep.Deleted, refusals, sweep.PacksToDelete, sweep.PacksToRepack, sweep.BytesFreed);
+    }
+
+    /// <summary>
+    /// Immutability window (plan Faz 11): a snapshot younger than this can
+    /// never be deleted, regardless of what the retention policy — or an
+    /// operator clicking "sil" in the panel — says. This is what makes prune
+    /// ransomware-resistant: an attacker with repo access can't just shorten
+    /// the policy and immediately wipe everything. Adds every protected id to
+    /// <paramref name="keepIds"/> and returns the ids it forced, with the
+    /// reason, so an explicit caller can report them back.
+    /// </summary>
+    private static Dictionary<string, ManualPruneRefusalReason> ApplyProtections(
+        RepositoryConfig config, List<SnapshotEntity> allSnapshots, HashSet<string> keepIds)
+    {
+        var forced = new Dictionary<string, ManualPruneRefusalReason>(StringComparer.Ordinal);
+
         if (config.AppendOnly)
         {
             // Strictly stronger than the immutability window: nothing is
@@ -76,6 +143,7 @@ public sealed class PruneEngine
             foreach (var snapshot in allSnapshots)
             {
                 keepIds.Add(snapshot.SnapshotId);
+                forced[snapshot.SnapshotId] = ManualPruneRefusalReason.AppendOnly;
             }
         }
         else if (config.ImmutabilityWindowDays is { } windowDays)
@@ -84,9 +152,27 @@ public sealed class PruneEngine
             foreach (var snapshot in allSnapshots.Where(s => s.StartedAtUtc >= cutoff))
             {
                 keepIds.Add(snapshot.SnapshotId);
+                forced[snapshot.SnapshotId] = ManualPruneRefusalReason.ImmutabilityWindow;
             }
         }
 
+        return forced;
+    }
+
+    /// <summary>
+    /// The shared mark-and-sweep core: everything outside <paramref name="keepIds"/>
+    /// dies. Both the policy-driven and the manual entry points funnel through
+    /// here so there is exactly one implementation of the write-then-delete
+    /// ordering (CLAUDE.md rule 5).
+    /// </summary>
+    private async Task<SweepOutcome> SweepAsync(
+        CatalogDbContext db,
+        List<SnapshotEntity> allSnapshots,
+        HashSet<string> keepIds,
+        bool dryRun,
+        string auditAction,
+        CancellationToken ct)
+    {
         var snapshotsToDelete = allSnapshots.Where(s => !keepIds.Contains(s.SnapshotId)).ToList();
 
         var packSubKey = SubKeys.Derive(_masterKey, SubKeys.PackKeyInfo);
@@ -124,7 +210,8 @@ public sealed class PruneEngine
 
         if (dryRun)
         {
-            return new PruneResult(true, snapshotsToDelete.Select(s => s.SnapshotId).ToList(), packsToDelete, packsToRepack, 0);
+            return new SweepOutcome(
+                true, snapshotsToDelete.Select(s => s.SnapshotId).ToList(), packsToDelete, packsToRepack, 0);
         }
 
         var bytesFreed = 0L;
@@ -163,20 +250,27 @@ public sealed class PruneEngine
         {
             await AuditLogger.RecordAsync(
                 db,
-                "prune",
+                auditAction,
                 $"{snapshotsToDelete.Count} snapshot silindi, {packsToDelete.Count} pack silindi, " +
                 $"{packsToRepack.Count} pack repack edildi, {bytesFreed:N0} bayt boşaltıldı. " +
                 $"Silinen snapshot'lar: {string.Join(", ", snapshotsToDelete.Select(s => s.SnapshotId))}",
                 ct);
         }
 
-        return new PruneResult(
+        return new SweepOutcome(
             false,
             snapshotsToDelete.Select(s => s.SnapshotId).ToList(),
             packsToDelete,
             packsToRepack,
             bytesFreed);
     }
+
+    private sealed record SweepOutcome(
+        bool DryRun,
+        IReadOnlyList<string> Deleted,
+        IReadOnlyList<string> PacksToDelete,
+        IReadOnlyList<string> PacksToRepack,
+        long BytesFreed);
 
     private async Task<long> RepackAsync(
         CatalogDbContext db, byte[] packSubKey, List<string> packIdsToRepack, HashSet<string> liveBlobIds, CancellationToken ct)

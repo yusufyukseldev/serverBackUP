@@ -35,7 +35,7 @@ public static class AeadCipher
         ReadOnlySpan<byte> nonce,
         ReadOnlySpan<byte> ciphertext,
         ReadOnlySpan<byte> tag,
-        Span<byte> plaintext,
+        Span<byte> plaintext, //veride değişiklik yapılabilir
         ReadOnlySpan<byte> associatedData = default)
     {
         using var aesGcm = new AesGcm(key, TagSizeBytes);

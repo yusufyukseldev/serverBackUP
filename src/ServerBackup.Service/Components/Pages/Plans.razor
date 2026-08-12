@@ -6,6 +6,7 @@
 @using ServerBackup.Data.Entities
 @using ServerBackup.Engine.Retention
 @using ServerBackup.Engine.Scheduling
+@using ServerBackup.Engine.Verify
 @using ServerBackup.Service.Formatting
 @using ServerBackup.Service.Scheduling
 @using ServerBackup.Service.Storage
@@ -51,6 +52,7 @@
                                 <th scope="col">Zamanlama</th>
                                 <th scope="col">Kaynaklar</th>
                                 <th scope="col">Saklama</th>
+                                <th scope="col">Doğrulama</th>
                                 <th scope="col">Sonraki çalışma</th>
                                 <th scope="col"><span class="sb-sr-only">Eylemler</span></th>
                             </tr>
@@ -71,6 +73,7 @@
                                         </span>
                                     </td>
                                     <td>@row.RetentionText</td>
+                                    <td>@row.VerifyText</td>
                                     <td class="r num">@row.NextRunText</td>
                                     <td class="r">
                                         <div class="sb-row sb-row--tight">
@@ -205,6 +208,48 @@
         </div>
         }
 
+        @if (_tab == "dogrulama")
+        {
+        <div class="sb-fs">
+            <label class="sb-check">
+                <input type="checkbox" @bind="_form.VerifyEnabled" />
+                Periyodik doğrulama
+            </label>
+
+            @if (_form.VerifyEnabled)
+            {
+                <div class="sb-row sb-row--wrap">
+                    <SbField Label="Sıklık" For="f-verify-cadence" Width="SbFieldWidth.Sm">
+                        <select class="sb-select" id="f-verify-cadence" @bind="_form.VerifyCadenceId">
+                            @foreach (var cadence in VerifyCadences)
+                            {
+                                <option value="@cadence.Id">@cadence.Label</option>
+                            }
+                        </select>
+                    </SbField>
+                    <SbField Label="Seviye" For="f-verify-level" Width="SbFieldWidth.Sm">
+                        <select class="sb-select" id="f-verify-level" @bind="_form.VerifyLevelValue">
+                            <option value="@nameof(VerifyLevel.Index)">Hızlı — katalog tutarlılığı</option>
+                            <option value="@nameof(VerifyLevel.Packs)">Pack bütünlüğü — SHA-256</option>
+                            <option value="@nameof(VerifyLevel.Full)">Tam — her blob'u çöz ve doğrula</option>
+                        </select>
+                    </SbField>
+                </div>
+                <div class="sb-preview">
+                    <div class="sb-hint">
+                        Bu depo gözetimsiz erişime açık olmalı — zamanlanmış doğrulama, tıpkı zamanlanmış
+                        yedekleme gibi, servisin parola sormadan depoyu açabilmesini gerektirir. Sorun
+                        bulunursa uyarı olarak bildirilir.
+                    </div>
+                </div>
+            }
+            else
+            {
+                <p class="sb-hint">Bu plan için yedekler doğrulanmaz. Bozulma yalnızca elle çalıştırılan doğrulamayla ya da geri yükleme sırasında fark edilir.</p>
+            }
+        </div>
+        }
+
         @if (_tab == "saklama")
         {
         <div class="sb-fs">
@@ -316,10 +361,14 @@
         public int StartHour { get; set; } = 8;
         public int EndHour { get; set; } = 20;
         public int IntervalHours { get; set; } = 2;
+
+        public bool VerifyEnabled { get; set; }
+        public string VerifyCadenceId { get; set; } = "haftalik";
+        public string VerifyLevelValue { get; set; } = nameof(VerifyLevel.Packs);
     }
 
     private sealed record PlanRow(
-        string RepoPath, PlanEntity Plan, IReadOnlyList<string> SourcePaths, string RetentionText, string NextRunText);
+        string RepoPath, PlanEntity Plan, IReadOnlyList<string> SourcePaths, string RetentionText, string VerifyText, string NextRunText);
 
     private sealed record Tab(string Id, string Label);
 
@@ -328,6 +377,16 @@
         new("kaynak", "Kaynak"),
         new("zamanlama", "Zamanlama"),
         new("saklama", "Saklama"),
+        new("dogrulama", "Doğrulama"),
+    ];
+
+    private sealed record VerifyCadence(string Id, string Label, string Cron);
+
+    private static readonly VerifyCadence[] VerifyCadences =
+    [
+        new("haftalik", "Haftalık", "0 4 * * 0"),
+        new("iki_haftada_bir", "İki haftada bir", "0 4 1,15 * *"),
+        new("aylik", "Aylık", "0 4 1 * *"),
     ];
 
     /// <summary>
@@ -402,6 +461,9 @@
             KeepMonthly = policy?.KeepMonthly,
             KeepYearly = policy?.KeepYearly,
             RetentionPreset = PresetIdFor(policy),
+            VerifyEnabled = !string.IsNullOrEmpty(row.Plan.VerifyCronSchedule),
+            VerifyCadenceId = VerifyCadences.FirstOrDefault(c => c.Cron == row.Plan.VerifyCronSchedule)?.Id ?? "haftalik",
+            VerifyLevelValue = row.Plan.VerifyLevel ?? nameof(VerifyLevel.Packs),
         };
 
         ApplySchedule(row.Plan.CronSchedule);
@@ -459,7 +521,22 @@
             var n => $"{n} yol",
         },
         "zamanlama" => BuildPreview().Description,
+        "dogrulama" => VerifySummary(_form.VerifyEnabled ? BuildVerifyCron() : null, _form.VerifyLevelValue),
         _ => RetentionSummary(BuildRetentionJson()),
+    };
+
+    private string BuildVerifyCron() =>
+        VerifyCadences.First(c => c.Id == _form.VerifyCadenceId).Cron;
+
+    private static string VerifySummary(string? cron, string? level) => string.IsNullOrEmpty(cron)
+        ? "Doğrulanmaz"
+        : $"{VerifyCadences.FirstOrDefault(c => c.Cron == cron)?.Label ?? "Özel"} · {VerifyLevelLabel(level)}";
+
+    private static string VerifyLevelLabel(string? level) => level switch
+    {
+        nameof(VerifyLevel.Index) => "Hızlı",
+        nameof(VerifyLevel.Full) => "Tam",
+        _ => "Pack",
     };
 
     private void ApplyPreset(RetentionPreset preset)
@@ -611,6 +688,7 @@
                     plan,
                     JsonSerializer.Deserialize<string[]>(plan.SourcePathsJson) ?? [],
                     RetentionSummary(plan.RetentionPolicyJson),
+                    VerifySummary(plan.VerifyCronSchedule, plan.VerifyLevel),
                     NextRunText(plan.CronSchedule, lastRun)));
             }
         }
@@ -711,6 +789,8 @@
 
         var retentionJson = BuildRetentionJson();
         var sourcePathsJson = JsonSerializer.Serialize(_form.SourcePaths);
+        var verifyCron = _form.VerifyEnabled ? BuildVerifyCron() : null;
+        var verifyLevel = _form.VerifyEnabled ? _form.VerifyLevelValue : null;
 
         await using var db = CatalogDbContextFactory.Create(Path.Combine(_form.RepoPath, "catalog.db"));
 
@@ -723,6 +803,8 @@
                 SourcePathsJson = sourcePathsJson,
                 CronSchedule = cron,
                 RetentionPolicyJson = retentionJson,
+                VerifyCronSchedule = verifyCron,
+                VerifyLevel = verifyLevel,
                 CreatedAtUtc = DateTimeOffset.UtcNow,
             });
         }
@@ -741,6 +823,8 @@
             plan.SourcePathsJson = sourcePathsJson;
             plan.CronSchedule = cron;
             plan.RetentionPolicyJson = retentionJson;
+            plan.VerifyCronSchedule = verifyCron;
+            plan.VerifyLevel = verifyLevel;
         }
 
         await db.SaveChangesAsync();

@@ -39,6 +39,10 @@ public sealed class PruneCommand : AsyncCommand<PruneCommand.Settings>
         [Description("Sadece bu plana ait snapshot'lara uygula. Verilmezse depodaki tüm snapshot'lar değerlendirilir.")]
         public string? PlanId { get; init; }
 
+        [CommandOption("--snapshot")]
+        [Description("Bu snapshot'ı sil (birden çok kez verilebilir). Verilirse saklama kuralları yerine sadece bu snapshot'lar silinir.")]
+        public string[] SnapshotIds { get; init; } = [];
+
         [CommandOption("--apply")]
         [Description("Gerçekten sil/repack et. Verilmezse sadece ne yapılacağı gösterilir (dry-run, varsayılan).")]
         public bool Apply { get; init; }
@@ -52,6 +56,11 @@ public sealed class PruneCommand : AsyncCommand<PruneCommand.Settings>
         var masterKey = await RepositoryKeyStore.UnlockAsync(settings.Repo, password, cancellationToken);
         try
         {
+            if (settings.SnapshotIds.Length > 0)
+            {
+                return await RunManualAsync(settings, masterKey, cancellationToken);
+            }
+
             var policy = new RetentionPolicy(
                 KeepLast: settings.KeepLast,
                 KeepDaily: settings.KeepDaily,
@@ -79,4 +88,35 @@ public sealed class PruneCommand : AsyncCommand<PruneCommand.Settings>
             CryptographicOperations.ZeroMemory(masterKey);
         }
     }
+
+    private static async Task<int> RunManualAsync(Settings settings, byte[] masterKey, CancellationToken ct)
+    {
+        var engine = new PruneEngine(settings.Repo, masterKey);
+        var result = await engine.RunManualAsync(settings.SnapshotIds, dryRun: !settings.Apply, ct: ct);
+
+        var mode = result.DryRun ? "[yellow](dry-run — hiçbir şey silinmedi)[/]" : "[green](uygulandı)[/]";
+        AnsiConsole.MarkupLine($"Elle snapshot silme {mode}");
+        AnsiConsole.MarkupLine($"  Silinecek snapshot: {result.SnapshotsToDelete.Count}");
+        AnsiConsole.MarkupLine($"  Silinecek pack: {result.PacksToDelete.Count}");
+        AnsiConsole.MarkupLine($"  Repack edilecek pack: {result.PacksToRepack.Count}");
+        if (!result.DryRun)
+        {
+            AnsiConsole.MarkupLine($"  Boşaltılan alan: {result.BytesFreed:N0} bayt");
+        }
+
+        foreach (var refusal in result.Refused)
+        {
+            AnsiConsole.MarkupLine($"  [red]Silinemedi[/] {refusal.SnapshotId.EscapeMarkup()}: {Explain(refusal.Reason)}");
+        }
+
+        return result.Refused.Count > 0 ? 1 : 0;
+    }
+
+    private static string Explain(ManualPruneRefusalReason reason) => reason switch
+    {
+        ManualPruneRefusalReason.AppendOnly => "depo yalnızca-ekleme modunda",
+        ManualPruneRefusalReason.ImmutabilityWindow => "snapshot değişmezlik penceresinde",
+        ManualPruneRefusalReason.NotFound => "bu depoda böyle bir snapshot yok",
+        _ => "bilinmeyen sebep",
+    };
 }

@@ -100,6 +100,28 @@ Conventional Commits: `feat:`, `fix:`, `test:`, `chore:`, `docs:`,
 değişiklikten önce de ara commit atılır. Commit mesajı Türkçe veya İngilizce
 olabilir, tutarlı ol.
 
+## Model Yönlendirme
+
+Bu depoda iki alt ajan tanımlı (`.claude/agents/`): **`sb-invariant`**
+(opus/xhigh) ve **`sb-ui`** (sonnet/medium). Yeni bir iş parçası ele
+alınırken önce hangisine girdiğine karar ver:
+
+- **`sb-invariant`'a git:** snapshot/prune silme semantiği, repack/index
+  yeniden inşası, sıcak yol (chunker/crypto/pack okuma-yazma), IO/bant
+  kısıtlama, iptal edilebilir veya yarıda kalabilen yedekleme/geri yükleme
+  akışları — kısaca "yanlışı derleyiciden ve testten sessizce geçip depoyu
+  ya da diski bozabilir mi?" sorusuna evet denen her şey.
+- **`sb-ui`'ye git:** var olan bir Engine/Data yeteneğini panele veya
+  zamanlayıcıya bağlamak, dryRun sonucunu tabloya basmak, mevcut bir desenin
+  (ör. yedekleme ilerlemesi) simetriğini kopyalamak — karar yükü düşük,
+  hatası hemen görünür olan iş.
+
+Ana oturum kendi başına da çalışabilir; ajanlara devretmek zorunlu değil,
+ama kural 4/5 sınırına değen bir iş asla sonnet/medium'da bitirilmiş
+sayılmaz — ya `sb-invariant`'a devret ya da eşdeğer titizlikte (yüksek
+efor, "yarıda kesilirse ne olur" testi dahil) kendin yap. Sıcak yola tek
+seferlik bir komutla girmek için `/hotpath` kullanılabilir.
+
 ## Yapma Listesi
 
 - Buluta bir şey gönderme (kod, veri, telemetri fark etmez — bu ürünün var

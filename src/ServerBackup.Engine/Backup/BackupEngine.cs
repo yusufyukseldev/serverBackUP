@@ -11,6 +11,7 @@ using ServerBackup.Data.Entities;
 using ServerBackup.Engine.Audit;
 using ServerBackup.Engine.Repository;
 using ServerBackup.Engine.Scanning;
+using ServerBackup.Engine.Throttling;
 
 namespace ServerBackup.Engine.Backup;
 
@@ -32,6 +33,19 @@ public sealed class BackupEngine
     private readonly int _compressionParallelism;
     private readonly AnomalyPolicy? _anomalyPolicy;
 
+    /// <summary>
+    /// Null when the run is unthrottled. Every throttle call site is guarded
+    /// by a null check on this field, so an unconfigured run executes exactly
+    /// the code it executed before the limit existed.
+    /// </summary>
+    internal readonly TokenBucketThrottle? Throttle;
+
+    /// <param name="maxBytesPerSecond">
+    /// Optional cap on the bytes-per-second this run pushes through the disk.
+    /// Null (the default) means unlimited. Reads (source chunking) and writes
+    /// (pack files) share this single budget — see
+    /// <see cref="TokenBucketThrottle"/> for why.
+    /// </param>
     public BackupEngine(
         ISourceProvider source,
         string repoPath,
@@ -39,7 +53,8 @@ public sealed class BackupEngine
         ScanFilter? filter = null,
         IProgress<BackupProgress>? progress = null,
         int? compressionParallelism = null,
-        AnomalyPolicy? anomalyPolicy = null)
+        AnomalyPolicy? anomalyPolicy = null,
+        long? maxBytesPerSecond = null)
     {
         _source = source;
         _repoPath = repoPath;
@@ -50,6 +65,7 @@ public sealed class BackupEngine
         _chunker = new FastCdcChunker(GearTableFactory.Derive(masterKey));
         _compressionParallelism = compressionParallelism ?? Math.Max(1, Environment.ProcessorCount - 1);
         _anomalyPolicy = anomalyPolicy;
+        Throttle = maxBytesPerSecond is { } rate ? new TokenBucketThrottle(rate) : null;
     }
 
     /// <summary>Per-run counters. Kept off the engine instance so a single BackupEngine can safely run multiple backups sequentially.</summary>
@@ -118,7 +134,7 @@ public sealed class BackupEngine
         var writeChannel = Channel.CreateBounded<PreparedBlob>(
             new BoundedChannelOptions(256) { SingleReader = true, SingleWriter = false });
 
-        await using var packFileSet = new PackFileSet(_repoPath, packSubKey, db);
+        await using var packFileSet = new PackFileSet(_repoPath, packSubKey, db, Throttle);
 
         var compressionWorkers = Enumerable.Range(0, _compressionParallelism)
             .Select(_ => Task.Run(
@@ -385,6 +401,16 @@ public sealed class BackupEngine
             foreach (var chunk in _chunker.Chunk(stream))
             {
                 ct.ThrowIfCancellationRequested();
+
+                if (Throttle is not null)
+                {
+                    // Charged here rather than inside the source provider: this
+                    // is where bytes-read-off-the-disk are first countable, and
+                    // the rate policy belongs to the engine, not to the thin OS
+                    // wrapper behind ISourceProvider.
+                    await Throttle.WaitForBudgetAsync(chunk.Length, ct);
+                }
+
                 var blobId = BlobId.Compute(_idKey, chunk);
                 chunkIds.Add(Convert.ToHexStringLower(blobId));
                 await writer.WriteAsync(new PendingBlob(blobId, BlobKind.Data, chunk), ct);
